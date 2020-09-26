@@ -1,13 +1,14 @@
 package socks5
 
 import (
-	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"strconv"
+
+	"github.com/nikandfor/errors"
+	"github.com/nikandfor/tlog"
 )
 
 type (
@@ -19,9 +20,15 @@ type (
 
 	Addr string
 
-	Authenticator func(c BufConn) error
+	Authenticator interface {
+		Auth(c net.Conn) error
+	}
 
-	ConstAuthenticator struct {
+	ClientAuthenticator interface {
+		ClientAuth(c net.Conn) error
+	}
+
+	ConstUserPassAuthenticator struct {
 		User string
 		Pass string
 	}
@@ -37,8 +44,10 @@ type (
 		ServeSOCKS5(Request) error
 	}
 
+	HandlerFunc func(Request) error
+
 	Server struct {
-		h Handler
+		Handler Handler
 
 		// Auth methods in order of priority
 		AuthMethods []AuthMethod
@@ -47,23 +56,22 @@ type (
 	}
 
 	Dialer struct {
-		net.Dialer
+		DialContext func(ctx context.Context, nw, addr string) (net.Conn, error)
 
 		// Auth methods in order of priority
 		AuthMethods []AuthMethod
 
-		Auth map[AuthMethod]Authenticator
+		Auth map[AuthMethod]ClientAuthenticator
 	}
 
-	dialerTo struct {
+	DialerTo struct {
 		*Dialer
-		nw, addr string
+		Net, Addr string
 	}
 
-	BufConn struct {
-		*bufio.Reader
+	ProxyConn struct {
 		net.Conn
-		raddr net.Addr
+		rAddr net.Addr
 	}
 )
 
@@ -91,6 +99,19 @@ const (
 	CommandUDP     Command = 0x03
 )
 
+// Status Codes
+const (
+	StatusOK StatusCode = iota
+	StatusGeneralFailure
+	StatusNotAllowed
+	StatusNetworkUnreachable
+	StatusHostUnreachable
+	StatusConnRefused
+	StatusTTLExpired
+	StatusProtocolError
+	StatusAddressTypeNotSupported
+)
+
 // errors
 var (
 	ErrUnsupportedVersion = errors.New("unsupported version")
@@ -99,21 +120,43 @@ var (
 	ErrUnauthenticated    = errors.New("unauthenticated")
 )
 
-func (s *Server) HandleConn(c net.Conn) (err error) {
+var zeroDialer net.Dialer
+
+var tl *tlog.Logger
+
+func (s *Server) Serve(l net.Listener) (err error) {
+	for {
+		var c net.Conn
+		c, err = l.Accept()
+		if err != nil {
+			return
+		}
+
+		go s.ServeConn(c)
+	}
+}
+
+func (s *Server) ServeConn(c net.Conn) (err error) {
 	defer func() {
+		tl.Printf("close server conn: %v", err)
+
 		e := c.Close()
 		if err == nil {
 			err = e
 		}
 	}()
 
-	bc := BufConn{Conn: c}
-	bc.Reset(c)
+	//	bc := BufConn{
+	//		Reader: bufio.NewReader(c),
+	//		Conn:   c,
+	//	}
 
-	cauth, err := s.handshake(bc)
+	cauth, err := s.handshake(c)
 	if err != nil {
 		return err
 	}
+
+	tl.Printf("handshake done: cauth %v", cauth)
 
 	if cauth != AuthNone {
 		auth := s.Auth[cauth]
@@ -121,34 +164,45 @@ func (s *Server) HandleConn(c net.Conn) (err error) {
 			return ErrNoAuthenticator
 		}
 
-		err = auth(bc)
+		err = auth.Auth(c)
 		if err != nil {
 			return err
 		}
 	}
 
-	req, err := s.readRequest(bc)
+	tl.Printf("auth done")
+
+	req, err := s.readRequest(c)
 	if err != nil {
 		return err
 	}
 
-	req.c = bc
+	req.c = c
 
-	return s.h.ServeSOCKS5(req)
+	tl.Printf("request read")
+
+	return s.Handler.ServeSOCKS5(req)
 }
 
-func (s *Server) readRequest(c BufConn) (req Request, err error) {
-	buf, err := c.Peek(2)
+func (s *Server) readRequest(c net.Conn) (req Request, err error) {
+	var buf [3]byte
+
+	n, err := c.Read(buf[:])
 	if err != nil {
 		return
 	}
 
+	if n < 2 {
+		return req, io.ErrUnexpectedEOF
+	}
+
 	if buf[0] != 0x05 { // proto version
-		err = ErrUnsupportedVersion
-		return
+		return req, ErrUnsupportedVersion
 	}
 
 	req.Command = Command(buf[1])
+
+	tl.Printf("read req header: %v", req.Command)
 
 	req.Addr, err = readAddr(c, req.Command)
 	if err != nil {
@@ -158,30 +212,35 @@ func (s *Server) readRequest(c BufConn) (req Request, err error) {
 	return
 }
 
-func (s *Server) handshake(c BufConn) (_ AuthMethod, err error) {
-	buf, err := c.Peek(2)
+func (s *Server) handshake(c net.Conn) (_ AuthMethod, err error) {
+	var buf [256]byte
+
+	n, err := c.Read(buf[:2])
 	if err != nil {
 		return
 	}
 
-	if buf[0] != 0x5 { // protocol version
+	if n < 2 {
+		return 0, io.ErrUnexpectedEOF
+	}
+
+	if buf[0] != 0x05 { // protocol version
 		return 0, ErrUnsupportedVersion
 	}
 
 	nauth := int(buf[1])
 
-	_, err = c.Discard(2)
+	n, err = c.Read(buf[:nauth])
 	if err != nil {
 		return 0, err
 	}
 
-	buf, err = c.Peek(nauth)
-	if err != nil {
-		return 0, err
+	if n != nauth {
+		return 0, io.ErrUnexpectedEOF
 	}
 
 	var clAuth [256]bool
-	for _, a := range buf {
+	for _, a := range buf[:n] {
 		clAuth[a] = true
 	}
 
@@ -196,7 +255,10 @@ func (s *Server) handshake(c BufConn) (_ AuthMethod, err error) {
 		}
 	}
 
-	_, err = c.Write([]byte{0x5, byte(cauth)}) // version, cauth
+	buf[0] = 0x05
+	buf[1] = byte(cauth)
+
+	_, err = c.Write(buf[:2]) // version, cauth
 	if err != nil {
 		return 0, err
 	}
@@ -214,12 +276,14 @@ func (r *Request) WriteStatus(s StatusCode, a net.Addr) (c net.Conn, err error) 
 			return
 		}
 
+		tl.Printf("close server conn: %v", err)
+
 		_ = r.c.Close()
 	}()
 
 	var b []byte
 
-	b = append(b, []byte{0x05, byte(s), 0x00}...)
+	b = append(b, 0x05, byte(s), 0x00)
 
 	addIP := func(ip []byte, p int) {
 		switch len(ip) {
@@ -245,6 +309,7 @@ func (r *Request) WriteStatus(s StatusCode, a net.Addr) (c net.Conn, err error) 
 	}
 
 	_, err = r.c.Write(b)
+	tl.Printf("sent response: % x  => %v", b, err)
 	if err != nil {
 		return
 	}
@@ -252,7 +317,19 @@ func (r *Request) WriteStatus(s StatusCode, a net.Addr) (c net.Conn, err error) 
 	return r.c, nil
 }
 
-func (d dialerTo) DialContext(ctx context.Context, nw, addr string) (cc net.Conn, err error) {
+func (d *Dialer) ForProxy(nw, addr string) DialerTo {
+	return DialerTo{
+		Dialer: d,
+		Net:    nw,
+		Addr:   addr,
+	}
+}
+
+func (d DialerTo) Dial(nw, addr string) (net.Conn, error) {
+	return d.DialContext(context.Background(), nw, addr)
+}
+
+func (d DialerTo) DialContext(ctx context.Context, nw, addr string) (cc net.Conn, err error) {
 	host, ports, err := net.SplitHostPort(addr)
 	if err != nil {
 		return
@@ -267,7 +344,11 @@ func (d dialerTo) DialContext(ctx context.Context, nw, addr string) (cc net.Conn
 		return
 	}
 
-	c, err := d.Dialer.Dialer.DialContext(ctx, d.nw, d.addr)
+	dial := d.Dialer.DialContext
+	if dial == nil {
+		dial = zeroDialer.DialContext
+	}
+	c, err := dial(ctx, d.Net, d.Addr)
 	if err != nil {
 		return
 	}
@@ -276,6 +357,8 @@ func (d dialerTo) DialContext(ctx context.Context, nw, addr string) (cc net.Conn
 		if err == nil {
 			return
 		}
+
+		tl.Printf("close client conn: %v", err)
 
 		_ = c.Close()
 	}()
@@ -291,25 +374,22 @@ func (d dialerTo) DialContext(ctx context.Context, nw, addr string) (cc net.Conn
 
 	_, err = c.Write(b)
 	if err != nil {
-		return
+		return nil, errors.Wrap(err, "send handshake")
 	}
 
 	n, err := c.Read(b[:2])
 	if err != nil {
-		return
+		return nil, errors.Wrap(err, "read handshake")
 	}
 
+	tl.Printf("handshake resp % x", b[:2])
+
 	if n < 2 {
-		return c, io.ErrUnexpectedEOF
+		return nil, io.ErrUnexpectedEOF
 	}
 
 	if b[0] != 0x05 { // proto version
-		return c, ErrUnsupportedVersion
-	}
-
-	bc := BufConn{
-		Reader: bufio.NewReader(c),
-		Conn:   c,
+		return nil, ErrUnsupportedVersion
 	}
 
 	cauth := AuthMethod(b[1])
@@ -321,21 +401,24 @@ func (d dialerTo) DialContext(ctx context.Context, nw, addr string) (cc net.Conn
 			return c, ErrNoAuthenticator
 		}
 
-		err = auth(bc)
+		err = auth.ClientAuth(c)
 		if err != nil {
 			return
 		}
 	}
 
+	tl.Printf("auth done")
+
 	// request
 
-	b = append(b[:0], 0x05, 0x01, 0, 0x03, byte(len(host))) // proto version, cmd (tcp/ip conn), reserved, addr_type (domain name), addr_len
+	b = append(b[:0], 0x05, 0x01, 0, // proto version, cmd (tcp/ip conn), reserved
+		0x03, byte(len(host))) // addr_type (domain name), addr_len
 
 	switch nw {
 	case "tcp", "tcp4", "tcp6":
-		b[1] = 0x01
+		b[1] = 0x01 // tcp conn
 	case "udp", "udp4", "udp6":
-		b[1] = 0x03
+		b[1] = 0x03 // udp bind
 	default:
 		panic("unsupported network type")
 	}
@@ -344,34 +427,49 @@ func (d dialerTo) DialContext(ctx context.Context, nw, addr string) (cc net.Conn
 
 	b = append(b, byte(port>>8), byte(port))
 
+	tl.Printf("request sent % x", b)
+
 	_, err = c.Write(b)
 	if err != nil {
 		return
 	}
 
-	buf, err := bc.Peek(2)
+	// response
+
+	n, err = c.Read(b[:3])
 	if err != nil {
 		return
 	}
 
-	if buf[0] != 0x05 {
+	tl.Printf("resp % x", b[:3])
+
+	if n < 3 {
+		return nil, io.ErrUnexpectedEOF
+	}
+
+	if b[0] != 0x05 {
 		return nil, ErrUnsupportedVersion
 	}
 
-	if buf[1] != 0 {
-		err = StatusCode(buf[1])
+	if b[1] != 0 {
+		err = StatusCode(b[1])
 		return
 	}
 
-	bc.raddr, err = readAddr(bc, CommandTCPConn)
+	raddr, err := readAddr(c, CommandTCPConn)
 	if err != nil {
 		return
 	}
 
-	return bc, nil
+	tl.Printf("remote addr %v", raddr)
+
+	return ProxyConn{
+		Conn:  c,
+		rAddr: raddr,
+	}, nil
 }
 
-func (a *ConstAuthenticator) Auth(c BufConn) (err error) {
+func (a ConstUserPassAuthenticator) Auth(c net.Conn) (err error) {
 	var status byte = 1
 	defer func() {
 		_, e := c.Write([]byte{0x01, status}) // version, status
@@ -380,46 +478,47 @@ func (a *ConstAuthenticator) Auth(c BufConn) (err error) {
 		}
 	}()
 
-	l := 2
+	var buf [3 + 255 + 255]byte
 
-again:
-	buf, err := c.Peek(l)
+	n, err := c.Read(buf[:2])
 	if err != nil {
 		return err
+	}
+
+	if n < 2 {
+		return io.ErrUnexpectedEOF
 	}
 
 	if buf[0] != 0x01 { // auth algo version
-		return ErrUnsupportedVersion
+		return errors.Wrap(ErrUnsupportedVersion, "user/pass auth")
 	}
 
 	idlen := int(buf[1])
-	if 2+idlen+1 < len(buf) {
-		l = 2 + idlen + 1
-		goto again
+
+	n, err = c.Read(buf[:idlen+1])
+	if err != nil {
+		return err
+	}
+	if n < idlen+1 {
+		return io.ErrUnexpectedEOF
 	}
 
-	if string(buf[2:2+idlen]) != a.User {
+	if string(buf[:idlen]) != a.User {
 		return ErrUnauthenticated
 	}
 
-	_, err = c.Discard(2 + idlen)
+	pwlen := int(buf[idlen])
+
+	n, err = c.Read(buf[:pwlen])
 	if err != nil {
 		return err
 	}
-
-	pwlen := int(buf[2+idlen])
-	buf, err = c.Peek(1 + pwlen)
-	if err != nil {
-		return err
+	if n < pwlen {
+		return io.ErrUnexpectedEOF
 	}
 
-	if string(buf[1:1+pwlen]) != a.Pass {
+	if string(buf[:pwlen]) != a.Pass {
 		return ErrUnauthenticated
-	}
-
-	_, err = c.Discard(1 + pwlen)
-	if err != nil {
-		return err
 	}
 
 	status = 0 // ok
@@ -427,60 +526,102 @@ again:
 	return nil
 }
 
-func (c BufConn) Read(p []byte) (int, error) {
-	return c.Reader.Read(p)
-}
+func (a ConstUserPassAuthenticator) ClientAuth(c net.Conn) (err error) {
+	if len(a.User) > 255 || len(a.Pass) > 255 {
+		panic("too long user or password")
+	}
 
-func readAddr(c BufConn, cmd Command) (addr net.Addr, err error) {
-	var ip []byte
-	var domain []byte
-	l := 1
+	var b []byte
 
-again:
-	buf, err := c.Peek(l)
+	b = append(b, 0x01, byte(len(a.User)))
+	b = append(b, a.User...)
+	b = append(b, byte(len(a.Pass)))
+	b = append(b, a.Pass...)
+
+	_, err = c.Write(b)
+
+	n, err := c.Read(b[:2])
 	if err != nil {
 		return
 	}
 
-	i := 0          // port start
-	switch buf[0] { // addr type
-	case 0x01: // ipv4
-		if l < 7 {
-			l = 7
-			goto again
-		}
-
-		ip = make([]byte, 4)
-		copy(ip, buf[1:5])
-
-		i += 5
-	case 0x03: // domain name
-		dl := int(buf[1])
-
-		if l < 2+dl+2 {
-			l = 2 + dl + 2
-			goto again
-		}
-
-		i += 2 // type, len
-
-		domain = buf[i : i+dl]
-
-		i += dl
-	case 0x04: // ipv6
-		if l < 1+16+2 {
-			l = 1 + 16 + 2
-			goto again
-		}
-
-		ip = make([]byte, 16)
-		copy(ip, buf[1:17])
-
-		i += 17
+	if n != 2 {
+		return io.ErrUnexpectedEOF
 	}
 
-	port := int(buf[i])<<8 | int(buf[i])
-	i += 2
+	if b[0] != 0x01 {
+		return errors.Wrap(ErrUnsupportedVersion, "user/pass auth")
+	}
+
+	if b[1] != 0 {
+		return ErrUnauthenticated
+	}
+
+	return nil
+}
+
+func readAddr(c net.Conn, cmd Command) (addr net.Addr, err error) {
+	var ip []byte
+	var domain []byte
+
+	var buf [257]byte
+
+	n, err := c.Read(buf[:1])
+	if err != nil {
+		return
+	}
+	if n < 1 {
+		return nil, io.ErrUnexpectedEOF
+	}
+
+	tl.Printf("addr type %x", buf[0])
+
+	i := 0
+	addrType := buf[0]
+	read := 0
+	switch addrType {
+	case 0x01: // ipv4
+		read = 4 + 2
+	case 0x03: // domain name
+		i++
+		n, err = c.Read(buf[i : i+1])
+		if err != nil {
+			return
+		}
+		if n < 1 {
+			return nil, io.ErrUnexpectedEOF
+		}
+
+		read = int(buf[i]) + 2
+	case 0x04: // ipv6
+		read = 16 + 2
+	default:
+		return nil, errors.Wrap(ErrUnsupportedVersion, "address type (%x)", addrType)
+	}
+
+	i++
+	n, err = c.Read(buf[i : i+read])
+	if err != nil {
+		return nil, err
+	}
+	if n < read {
+		return nil, io.ErrUnexpectedEOF
+	}
+
+	tl.Printf("addr data % x", buf[1:i+read])
+
+	switch addrType {
+	case 0x01: // ipv4
+		ip = make([]byte, 4)
+		copy(ip, buf[i:])
+	case 0x03: // domain name
+		domain = buf[i : i+read-2]
+	case 0x04: // ipv6
+		ip = make([]byte, 16)
+		copy(ip, buf[i:])
+	}
+
+	port := int(buf[i+read-2])<<8 | int(buf[i+read-1])
 
 	if ip == nil {
 		addr = Addr(fmt.Sprintf("%s:%d", domain, port))
@@ -500,14 +641,17 @@ again:
 		}
 	}
 
-	_, err = c.Discard(i)
-	if err != nil {
-		return
-	}
+	tl.Printf("addr read: %v  of % x", addr, buf[:i+read])
 
 	return
 
 }
+
+func (f HandlerFunc) ServeSOCKS5(req Request) error {
+	return f(req)
+}
+
+func (c ProxyConn) RemoteAddr() net.Addr { return c.rAddr }
 
 func (a Addr) Network() string { return "" }
 func (a Addr) String() string  { return string(a) }
