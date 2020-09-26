@@ -94,11 +94,6 @@ func TestUserPassAuth(t *testing.T) {
 
 	wg.Wait()
 
-	to := time.Now().Add(time.Millisecond)
-
-	sc.SetDeadline(to)
-	cc.SetDeadline(to)
-
 	var b [10]byte
 
 	n, err := sc.Read(b[:])

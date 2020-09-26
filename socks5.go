@@ -142,7 +142,7 @@ func (s *Server) Serve(l net.Listener) (err error) {
 			return
 		}
 
-		go s.ServeConn(c)
+		go s.ServeConn(c) //nolint:errcheck
 	}
 }
 
@@ -517,6 +517,9 @@ func (a ConstUserPassAuthenticator) ClientAuth(c net.Conn) (err error) {
 	b = append(b, a.Pass...)
 
 	_, err = c.Write(b)
+	if err != nil {
+		return
+	}
 
 	n, err := c.Read(b[:2])
 	if err != nil {
@@ -716,11 +719,13 @@ func (c Command) String() string {
 	case CommandUDP:
 		return "udp_assoc"
 	default:
-		return fmt.Sprintf("cmd[%x]", c)
+		return fmt.Sprintf("cmd[%x]", int(c))
 	}
 }
 
-func (c StatusCode) String() string {
+func (c StatusCode) String() string { return c.Error() }
+
+func (c StatusCode) Error() string {
 	switch c {
 	case StatusOK:
 		return "ok"
@@ -741,8 +746,6 @@ func (c StatusCode) String() string {
 	case StatusAddressTypeNotSupported:
 		return "addr_type_not_supported"
 	default:
-		return fmt.Sprintf("status[%x]", c)
+		return fmt.Sprintf("status[%x]", int(c))
 	}
 }
-
-func (c StatusCode) Error() string { return fmt.Sprintf("%v", int(c)) }
