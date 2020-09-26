@@ -20,6 +20,12 @@ type (
 
 	Addr string
 
+	MethodAuthenticator interface {
+		AuthMethod(m AuthMethod, c net.Conn) error
+	}
+
+	MethodAuthenticatorFunc func(m AuthMethod, c net.Conn) error
+
 	Authenticator interface {
 		Auth(c net.Conn) error
 	}
@@ -32,6 +38,8 @@ type (
 		User string
 		Pass string
 	}
+
+	UserPassAuthenticator func(u, p string, c net.Conn) error
 
 	Request struct {
 		Command Command
@@ -110,6 +118,8 @@ const (
 	StatusTTLExpired
 	StatusProtocolError
 	StatusAddressTypeNotSupported
+
+	StatusUnsupportedCommand = StatusProtocolError
 )
 
 // errors
@@ -137,7 +147,15 @@ func (s *Server) Serve(l net.Listener) (err error) {
 }
 
 func (s *Server) ServeConn(c net.Conn) (err error) {
+	return s.ServeConnAuthHandler(c, s, s.Handler)
+}
+
+func (s *Server) ServeConnAuthHandler(c net.Conn, a MethodAuthenticator, h Handler) (err error) {
 	defer func() {
+		if c == nil {
+			return
+		}
+
 		tl.Printf("close server conn: %v", err)
 
 		e := c.Close()
@@ -146,11 +164,6 @@ func (s *Server) ServeConn(c net.Conn) (err error) {
 		}
 	}()
 
-	//	bc := BufConn{
-	//		Reader: bufio.NewReader(c),
-	//		Conn:   c,
-	//	}
-
 	cauth, err := s.handshake(c)
 	if err != nil {
 		return err
@@ -158,16 +171,9 @@ func (s *Server) ServeConn(c net.Conn) (err error) {
 
 	tl.Printf("handshake done: cauth %v", cauth)
 
-	if cauth != AuthNone {
-		auth := s.Auth[cauth]
-		if auth == nil {
-			return ErrNoAuthenticator
-		}
-
-		err = auth.Auth(c)
-		if err != nil {
-			return err
-		}
+	err = a.AuthMethod(cauth, c)
+	if err != nil {
+		return err
 	}
 
 	tl.Printf("auth done")
@@ -178,10 +184,29 @@ func (s *Server) ServeConn(c net.Conn) (err error) {
 	}
 
 	req.c = c
+	c = nil
 
 	tl.Printf("request read")
 
-	return s.Handler.ServeSOCKS5(req)
+	return h.ServeSOCKS5(req)
+}
+
+func (s *Server) AuthMethod(cauth AuthMethod, c net.Conn) (err error) {
+	if cauth == AuthNone {
+		return nil
+	}
+
+	auth := s.Auth[cauth]
+	if auth == nil {
+		return ErrNoAuthenticator
+	}
+
+	err = auth.Auth(c)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (s *Server) readRequest(c net.Conn) (req Request, err error) {
@@ -470,6 +495,50 @@ func (d DialerTo) DialContext(ctx context.Context, nw, addr string) (cc net.Conn
 }
 
 func (a ConstUserPassAuthenticator) Auth(c net.Conn) (err error) {
+	return UserPassAuthenticator(func(u, p string, c net.Conn) error {
+		if u != a.User || p != a.Pass {
+			return ErrUnauthenticated
+		}
+
+		return nil
+	}).Auth(c)
+}
+
+func (a ConstUserPassAuthenticator) ClientAuth(c net.Conn) (err error) {
+	if len(a.User) > 255 || len(a.Pass) > 255 {
+		panic("too long user or password")
+	}
+
+	var b []byte
+
+	b = append(b, 0x01, byte(len(a.User)))
+	b = append(b, a.User...)
+	b = append(b, byte(len(a.Pass)))
+	b = append(b, a.Pass...)
+
+	_, err = c.Write(b)
+
+	n, err := c.Read(b[:2])
+	if err != nil {
+		return
+	}
+
+	if n != 2 {
+		return io.ErrUnexpectedEOF
+	}
+
+	if b[0] != 0x01 {
+		return errors.Wrap(ErrUnsupportedVersion, "user/pass auth")
+	}
+
+	if b[1] != 0 {
+		return ErrUnauthenticated
+	}
+
+	return nil
+}
+
+func (a UserPassAuthenticator) Auth(c net.Conn) (err error) {
 	var status byte = 1
 	defer func() {
 		_, e := c.Write([]byte{0x01, status}) // version, status
@@ -503,9 +572,7 @@ func (a ConstUserPassAuthenticator) Auth(c net.Conn) (err error) {
 		return io.ErrUnexpectedEOF
 	}
 
-	if string(buf[:idlen]) != a.User {
-		return ErrUnauthenticated
-	}
+	user := string(buf[:idlen])
 
 	pwlen := int(buf[idlen])
 
@@ -517,45 +584,14 @@ func (a ConstUserPassAuthenticator) Auth(c net.Conn) (err error) {
 		return io.ErrUnexpectedEOF
 	}
 
-	if string(buf[:pwlen]) != a.Pass {
-		return ErrUnauthenticated
+	pwd := string(buf[:pwlen])
+
+	err = a(user, pwd, c)
+	if err != nil {
+		return err
 	}
 
 	status = 0 // ok
-
-	return nil
-}
-
-func (a ConstUserPassAuthenticator) ClientAuth(c net.Conn) (err error) {
-	if len(a.User) > 255 || len(a.Pass) > 255 {
-		panic("too long user or password")
-	}
-
-	var b []byte
-
-	b = append(b, 0x01, byte(len(a.User)))
-	b = append(b, a.User...)
-	b = append(b, byte(len(a.Pass)))
-	b = append(b, a.Pass...)
-
-	_, err = c.Write(b)
-
-	n, err := c.Read(b[:2])
-	if err != nil {
-		return
-	}
-
-	if n != 2 {
-		return io.ErrUnexpectedEOF
-	}
-
-	if b[0] != 0x01 {
-		return errors.Wrap(ErrUnsupportedVersion, "user/pass auth")
-	}
-
-	if b[1] != 0 {
-		return ErrUnauthenticated
-	}
 
 	return nil
 }
@@ -647,6 +683,10 @@ func readAddr(c net.Conn, cmd Command) (addr net.Addr, err error) {
 
 }
 
+func (f MethodAuthenticatorFunc) AuthMethod(m AuthMethod, c net.Conn) error {
+	return f(m, c)
+}
+
 func (f HandlerFunc) ServeSOCKS5(req Request) error {
 	return f(req)
 }
@@ -655,5 +695,54 @@ func (c ProxyConn) RemoteAddr() net.Addr { return c.rAddr }
 
 func (a Addr) Network() string { return "" }
 func (a Addr) String() string  { return string(a) }
+
+func (a AuthMethod) String() string {
+	switch a {
+	case AuthNone:
+		return "none"
+	case AuthUserPass:
+		return "user/pass"
+	default:
+		return fmt.Sprintf("auth[%x]", int(a))
+	}
+}
+
+func (c Command) String() string {
+	switch c {
+	case CommandTCPConn:
+		return "tcp_connect"
+	case CommandTCPBind:
+		return "tcp_bind"
+	case CommandUDP:
+		return "udp_assoc"
+	default:
+		return fmt.Sprintf("cmd[%x]", c)
+	}
+}
+
+func (c StatusCode) String() string {
+	switch c {
+	case StatusOK:
+		return "ok"
+	case StatusGeneralFailure:
+		return "general_fail"
+	case StatusNotAllowed:
+		return "not_allowed"
+	case StatusNetworkUnreachable:
+		return "net_unreachable"
+	case StatusHostUnreachable:
+		return "host_unreachable"
+	case StatusConnRefused:
+		return "conn_refused"
+	case StatusTTLExpired:
+		return "ttl_expired"
+	case StatusProtocolError:
+		return "proto_error"
+	case StatusAddressTypeNotSupported:
+		return "addr_type_not_supported"
+	default:
+		return fmt.Sprintf("status[%x]", c)
+	}
+}
 
 func (c StatusCode) Error() string { return fmt.Sprintf("%v", int(c)) }
