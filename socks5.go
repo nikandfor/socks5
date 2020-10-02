@@ -222,7 +222,7 @@ func (s *Server) readRequest(c net.Conn) (req Request, err error) {
 	}
 
 	if buf[0] != 0x05 { // proto version
-		return req, ErrUnsupportedVersion
+		return req, errors.Wrap(ErrUnsupportedVersion, "request proto version")
 	}
 
 	req.Command = Command(buf[1])
@@ -250,7 +250,7 @@ func (s *Server) handshake(c net.Conn) (_ AuthMethod, err error) {
 	}
 
 	if buf[0] != 0x05 { // protocol version
-		return 0, ErrUnsupportedVersion
+		return 0, errors.Wrap(ErrUnsupportedVersion, "handshake proto version")
 	}
 
 	nauth := int(buf[1])
@@ -414,7 +414,7 @@ func (d DialerTo) DialContext(ctx context.Context, nw, addr string) (cc net.Conn
 	}
 
 	if b[0] != 0x05 { // proto version
-		return nil, ErrUnsupportedVersion
+		return nil, errors.Wrap(ErrUnsupportedVersion, "handshake proto version")
 	}
 
 	cauth := AuthMethod(b[1])
@@ -473,7 +473,7 @@ func (d DialerTo) DialContext(ctx context.Context, nw, addr string) (cc net.Conn
 	}
 
 	if b[0] != 0x05 {
-		return nil, ErrUnsupportedVersion
+		return nil, errors.Wrap(ErrUnsupportedVersion, "response proto version")
 	}
 
 	if b[1] != 0 {
