@@ -14,6 +14,8 @@ type (
 	// Command is request command or reply code
 	Command uint8
 
+	Reply Command
+
 	// Addr is domain name addr
 	Addr string
 
@@ -46,7 +48,7 @@ const (
 
 // Reply Codes
 const (
-	ReplySuccess Command = iota
+	ReplySuccess Reply = iota
 	ReplyGeneralFailure
 	ReplyNotAllowed
 	ReplyNetworkUnreachable
@@ -147,7 +149,25 @@ authloop:
 	return auth, nil
 }
 
-func (p Proto) ReadReqRep(c net.Conn) (cmd Command, addr net.Addr, err error) {
+func (p Proto) ReadRequest(c net.Conn) (Command, net.Addr, error) {
+	return p.readReqRep(c, 0)
+}
+
+func (p Proto) ReadReply(c net.Conn, cmd Command) (Reply, net.Addr, error) {
+	reply, addr, err := p.readReqRep(c, cmd)
+
+	return Reply(reply), addr, err
+}
+
+func (p Proto) WriteRequest(c net.Conn, cmd Command, addr net.Addr) (err error) {
+	return p.writeReqRep(c, cmd, addr)
+}
+
+func (p Proto) WriteReply(c net.Conn, rep Reply, addr net.Addr) (err error) {
+	return p.writeReqRep(c, Command(rep), addr)
+}
+
+func (p Proto) readReqRep(c net.Conn, rcmd Command) (cmd Command, addr net.Addr, err error) {
 	var buf [258]byte
 
 	_, err = io.ReadFull(c, buf[:4])
@@ -161,7 +181,7 @@ func (p Proto) ReadReqRep(c net.Conn) (cmd Command, addr net.Addr, err error) {
 
 	cmd = Command(buf[1])
 
-	addr, err = readAddr(c, cmd, buf[3], buf[:])
+	addr, err = readAddr(c, buf[3], buf[:], rcmd == CommandUDPAssoc || cmd == CommandUDPAssoc)
 	if err != nil {
 		return cmd, addr, err
 	}
@@ -169,7 +189,7 @@ func (p Proto) ReadReqRep(c net.Conn) (cmd Command, addr net.Addr, err error) {
 	return cmd, addr, nil
 }
 
-func (p Proto) WriteReqRep(c net.Conn, cmd Command, addr net.Addr) (err error) {
+func (p Proto) writeReqRep(c net.Conn, cmd Command, addr net.Addr) (err error) {
 	var buf [256 + 6]byte
 
 	buf[0] = 0x5
@@ -296,12 +316,12 @@ func encodeAddrString(buf []byte, st int, addr string) (i int, err error) {
 	return i, nil
 }
 
-func readAddr(c net.Conn, cmd Command, typ byte, buf []byte) (addr net.Addr, err error) {
+func readAddr(c net.Conn, typ byte, buf []byte, udp bool) (addr net.Addr, err error) {
 	switch typ {
 	case 0x01: // ipv4
-		return readIP(c, cmd, 4, buf)
+		return readIP(c, 4, buf, udp)
 	case 0x04: // ipv6
-		return readIP(c, cmd, 16, buf)
+		return readIP(c, 16, buf, udp)
 	case 0x03: // domain name
 		return readName(c, buf)
 	default:
@@ -309,7 +329,7 @@ func readAddr(c net.Conn, cmd Command, typ byte, buf []byte) (addr net.Addr, err
 	}
 }
 
-func readIP(c net.Conn, cmd Command, len int, buf []byte) (addr net.Addr, err error) {
+func readIP(c net.Conn, len int, buf []byte, udp bool) (addr net.Addr, err error) {
 	_, err = io.ReadFull(c, buf[:len+2])
 	if err != nil {
 		return nil, err
@@ -321,19 +341,16 @@ func readIP(c net.Conn, cmd Command, len int, buf []byte) (addr net.Addr, err er
 
 	port := int(buf[len])<<8 | int(buf[len+1])
 
-	switch cmd {
-	case CommandTCPConn, CommandTCPBind:
-		addr = &net.TCPAddr{
-			IP:   ip,
-			Port: port,
-		}
-	case CommandUDPAssoc:
+	if udp {
 		addr = &net.UDPAddr{
 			IP:   ip,
 			Port: port,
 		}
-	default:
-		panic(cmd)
+	} else {
+		addr = &net.TCPAddr{
+			IP:   ip,
+			Port: port,
+		}
 	}
 
 	return addr, nil
@@ -367,6 +384,31 @@ func (c Command) String() string {
 		return "udp_assoc"
 	default:
 		return fmt.Sprintf("cmd[%x]", int(c))
+	}
+}
+
+func (r Reply) String() string {
+	switch r {
+	case ReplySuccess:
+		return "success"
+	case ReplyGeneralFailure:
+		return "general_failure"
+	case ReplyNotAllowed:
+		return "not_allowed"
+	case ReplyNetworkUnreachable:
+		return "network_unreachable"
+	case ReplyHostUnreachable:
+		return "host_unreachable"
+	case ReplyConnRefused:
+		return "conn_refused"
+	case ReplyTTLExpired:
+		return "ttl_expired"
+	case ReplyCommandNotSupported:
+		return "command_not_supported"
+	case ReplyAddressTypeNotSupported:
+		return "address_type_not_supported"
+	default:
+		return fmt.Sprintf("reply[%x]", int(r))
 	}
 }
 
