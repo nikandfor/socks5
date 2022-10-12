@@ -11,18 +11,18 @@ import (
 type (
 	AuthMethod uint8
 
-	// Command is request command or reply code
+	// Command is request command or reply code.
 	Command uint8
 
 	Reply Command
 
-	// Addr is domain name addr
+	// Addr is a string address.
 	Addr string
 
 	Proto struct{}
 )
 
-// Auth methids.
+// Auth Methods
 const (
 	AuthNone AuthMethod = iota
 	AuthGSSAPI
@@ -59,7 +59,7 @@ const (
 	ReplyAddressTypeNotSupported
 )
 
-// errors
+// Errors
 var (
 	ErrUnsupportedProtocol    = errors.New("unsupported protocol")
 	ErrUnsupportedCommand     = errors.New("unsupported command")
@@ -410,6 +410,10 @@ func (r Reply) String() string {
 	default:
 		return fmt.Sprintf("reply[%x]", int(r))
 	}
+}
+
+func (r Reply) Error() string {
+	return r.String()
 }
 
 func (a Addr) Network() string { return "" }
