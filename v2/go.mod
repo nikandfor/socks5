@@ -1,4 +1,4 @@
-module github.com/nikandfor/socks5
+module github.com/nikandfor/socks5/v2
 
 go 1.19
 
