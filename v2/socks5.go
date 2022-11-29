@@ -246,7 +246,10 @@ func encodeAddr(buf []byte, st int, a net.Addr) (i int, err error) {
 			return 0, err
 		}
 	default:
-		return 0, fmt.Errorf("unsupported address: %v", a)
+		i, err = encodeAddrString(buf, st, a.String())
+		if err != nil {
+			return 0, err
+		}
 	}
 
 	return i, nil
