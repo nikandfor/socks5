@@ -16,8 +16,11 @@ type (
 
 	Reply Command
 
-	// Addr is a string address.
-	Addr string
+	// TCPAddr is a string address.
+	TCPAddr string
+
+	// UDPAddr is a string address.
+	UDPAddr string
 
 	Proto struct{}
 )
@@ -235,7 +238,12 @@ func encodeAddr(buf []byte, st int, a net.Addr) (i int, err error) {
 		i++
 		buf[i] = byte(a.Port)
 		i++
-	case Addr:
+	case TCPAddr:
+		i, err = encodeAddrString(buf, st, string(a))
+		if err != nil {
+			return 0, err
+		}
+	case UDPAddr:
 		i, err = encodeAddrString(buf, st, string(a))
 		if err != nil {
 			return 0, err
@@ -326,7 +334,7 @@ func readAddr(c net.Conn, typ byte, buf []byte, udp bool) (addr net.Addr, err er
 	case 0x04: // ipv6
 		return readIP(c, 16, buf, udp)
 	case 0x03: // domain name
-		return readName(c, buf)
+		return readName(c, buf, udp)
 	default:
 		return nil, fmt.Errorf("%w: %v", ErrUnsupportedAddressType, typ)
 	}
@@ -359,7 +367,7 @@ func readIP(c net.Conn, len int, buf []byte, udp bool) (addr net.Addr, err error
 	return addr, nil
 }
 
-func readName(c net.Conn, buf []byte) (addr net.Addr, err error) {
+func readName(c net.Conn, buf []byte, udp bool) (addr net.Addr, err error) {
 	_, err = c.Read(buf[:1])
 	if err != nil {
 		return nil, err
@@ -374,7 +382,13 @@ func readName(c net.Conn, buf []byte) (addr net.Addr, err error) {
 
 	port := int(buf[n])<<8 | int(buf[n+1])
 
-	return Addr(fmt.Sprintf("%s:%d", buf[:n], port)), nil
+	a := fmt.Sprintf("%s:%d", buf[:n], port)
+
+	if udp {
+		return UDPAddr(a), nil
+	}
+
+	return TCPAddr(a), nil
 }
 
 func (c Command) String() string {
@@ -419,5 +433,8 @@ func (r Reply) Error() string {
 	return r.String()
 }
 
-func (a Addr) Network() string { return "" }
-func (a Addr) String() string  { return string(a) }
+func (a TCPAddr) Network() string { return "tcp" }
+func (a TCPAddr) String() string  { return string(a) }
+
+func (a UDPAddr) Network() string { return "udp" }
+func (a UDPAddr) String() string  { return string(a) }

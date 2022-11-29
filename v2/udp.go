@@ -115,7 +115,7 @@ func parseAddr(p []byte, st int, udp bool) (a net.Addr, i int, err error) {
 	case 0x04: // ipv6
 		return parseIP(p, st+1, 16, udp)
 	case 0x03: // domain name
-		return parseName(p, st+1)
+		return parseName(p, st+1, udp)
 	default:
 		return nil, -1, fmt.Errorf("%w: %v", ErrUnsupportedAddressType, p[st])
 	}
@@ -148,7 +148,7 @@ func parseIP(p []byte, st int, l int, udp bool) (a net.Addr, i int, err error) {
 	}
 }
 
-func parseName(p []byte, st int) (a net.Addr, i int, err error) {
+func parseName(p []byte, st int, udp bool) (addr net.Addr, i int, err error) {
 	i = st
 	l := int(p[i])
 	i++
@@ -157,14 +157,20 @@ func parseName(p []byte, st int) (a net.Addr, i int, err error) {
 		return nil, -1, fmt.Errorf("malformed datagram")
 	}
 
-	a = Addr(p[i : i+l])
+	//	a = Addr(p[i : i+l])
 	i += l
 
 	port := int(p[i])<<8 | int(p[i+1])
 
-	a = Addr(fmt.Sprintf("%s:%d", p[i-l:i], port))
+	a := fmt.Sprintf("%s:%d", p[i-l:i], port)
 
 	i += 2
 
-	return a, i, nil
+	if udp {
+		addr = UDPAddr(a)
+	} else {
+		addr = TCPAddr(a)
+	}
+
+	return addr, i, nil
 }

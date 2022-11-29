@@ -88,7 +88,7 @@ func (d *Dialer) DialContext(ctx context.Context, nw, addr string) (c net.Conn, 
 		reqAddr = ""
 	}
 
-	err = proto.WriteRequest(tc, cmd, Addr(reqAddr))
+	err = proto.WriteRequest(tc, cmd, TCPAddr(reqAddr))
 	if err != nil {
 		return nil, errors.Wrap(err, "send request")
 	}
