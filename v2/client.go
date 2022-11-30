@@ -99,7 +99,7 @@ func (d *Dialer) DialContext(ctx context.Context, nw, addr string) (c net.Conn, 
 	}
 
 	if rep != ReplySuccess {
-		return nil, errors.Wrap(rep, "reply")
+		return nil, errors.Wrap(rep, "got reply")
 	}
 
 	if cmd == CommandTCPConn {
