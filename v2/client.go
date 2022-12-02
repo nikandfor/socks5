@@ -28,7 +28,7 @@ type (
 	}
 )
 
-func (d *Dialer) DialContext(ctx context.Context, nw, addr string) (c net.Conn, err error) {
+func (d *Dialer) DialContext(ctx context.Context, nw, addr string) (_ net.Conn, err error) {
 	var cmd Command
 
 	switch nw {
@@ -77,7 +77,7 @@ func (d *Dialer) DialContext(ctx context.Context, nw, addr string) (c net.Conn, 
 	}
 
 	if d.Auther != nil || meth != AuthNone {
-		err = d.Auther.Auth(ctx, meth, c)
+		err = d.Auther.Auth(ctx, meth, tc)
 		if err != nil {
 			return nil, errors.Wrap(err, "auth")
 		}
