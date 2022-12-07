@@ -83,12 +83,17 @@ func (d *Dialer) DialContext(ctx context.Context, nw, addr string) (_ net.Conn, 
 		}
 	}
 
-	reqAddr := addr
-	if cmd == CommandUDPAssoc {
-		reqAddr = ""
+	var reqAddr net.Addr
+
+	if cmd == CommandTCPConn {
+		reqAddr = TCPAddr(addr)
+	} else if cmd == CommandUDPAssoc {
+		reqAddr = UDPAddr("")
+	} else {
+		panic(cmd)
 	}
 
-	err = proto.WriteRequest(tc, cmd, TCPAddr(reqAddr))
+	err = proto.WriteRequest(tc, cmd, reqAddr)
 	if err != nil {
 		return nil, errors.Wrap(err, "send request")
 	}
@@ -106,12 +111,7 @@ func (d *Dialer) DialContext(ctx context.Context, nw, addr string) (_ net.Conn, 
 		return tc, nil
 	}
 
-	uaddr, ok := raddr.(*net.UDPAddr)
-	if !ok {
-		return nil, errors.Wrap(err, "bad udp addr: %v (%[1]T)", uaddr)
-	}
-
-	uc, err := net.DialUDP(nw, nil, uaddr)
+	uc, err := dial(ctx, nw, raddr.String())
 	if err != nil {
 		return nil, errors.Wrap(err, "dial udp")
 	}

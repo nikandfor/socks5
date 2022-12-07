@@ -277,6 +277,11 @@ func encodeIP(buf []byte, st int, ip net.IP) (i int, err error) {
 		i++
 
 		i += copy(buf[i:], ip)
+	} else if len(ip) == 0 {
+		buf[i] = 0x1
+		i++
+
+		i += copy(buf[i:], []byte{0, 0, 0, 0})
 	} else {
 		return 0, fmt.Errorf("bad ip: %v", ip)
 	}

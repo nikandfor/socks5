@@ -11,7 +11,7 @@ import (
 type (
 	UDPConn struct {
 		raddr net.Addr
-		udp   *net.UDPConn
+		udp   net.Conn
 		tcp   net.Conn
 	}
 )
