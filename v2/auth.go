@@ -12,7 +12,7 @@ type (
 )
 
 func (a UserPassAuth) ReadRequest(c net.Conn) (usr, pwd string, err error) {
-	var buf [256]byte
+	buf := grow(nil, 16)
 
 	_, err = io.ReadFull(c, buf[:2])
 	if err != nil {
@@ -24,6 +24,7 @@ func (a UserPassAuth) ReadRequest(c net.Conn) (usr, pwd string, err error) {
 	}
 
 	l := int(buf[1])
+	buf = grow(buf, l+1)
 
 	_, err = io.ReadFull(c, buf[:l+1])
 	if err != nil {
@@ -33,6 +34,7 @@ func (a UserPassAuth) ReadRequest(c net.Conn) (usr, pwd string, err error) {
 	usr = string(buf[:l])
 
 	l = int(buf[l])
+	buf = grow(buf, l)
 
 	_, err = io.ReadFull(c, buf[:l])
 	if err != nil {
@@ -59,15 +61,23 @@ func (a UserPassAuth) WriteRequest(c net.Conn, usr, pwd string) (err error) {
 		return errors.New("too long user or password")
 	}
 
-	var buf [256]byte
+	b := make([]byte, 1+1+len(usr)+1+len(pwd))
+	i := 0
 
-	b := buf[:0]
-	b = append(b, 0x1, byte(len(usr)))
-	b = append(b, usr...)
-	b = append(b, byte(len(pwd)))
-	b = append(b, pwd...)
+	b[i] = 0x1
+	i++
 
-	_, err = c.Write(b)
+	b[i] = byte(len(usr))
+	i++
+	copy(b[i:], usr)
+	i += len(usr)
+
+	b[i] = byte(len(pwd))
+	i++
+	copy(b[i:], pwd)
+	i += len(pwd)
+
+	_, err = c.Write(b[:i])
 
 	return err
 }
