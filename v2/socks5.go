@@ -73,10 +73,7 @@ var (
 func (p Proto) ClientHandshake(c net.Conn, methods ...AuthMethod) (auth AuthMethod, err error) {
 	var bufdata [8]byte
 	buf := bufdata[:]
-
-	if 2+len(methods) > len(buf) {
-		buf = make([]byte, 2+len(methods))
-	}
+	buf = grow(buf, 2+len(methods))
 
 	buf[0] = 0x5
 	buf[1] = byte(len(methods))
@@ -128,9 +125,7 @@ func (p Proto) ServerHandshake(c net.Conn, methods ...AuthMethod) (auth AuthMeth
 	}
 
 	nmeth := int(buf[1])
-	if 2+nmeth > len(buf) {
-		buf = make([]byte, 2+nmeth)
-	}
+	buf = grow(buf, nmeth)
 
 	n, err := io.ReadFull(c, buf[:nmeth])
 	if errors.Is(err, io.EOF) {
@@ -169,47 +164,56 @@ authloop:
 }
 
 func (p Proto) ReadRequest(c net.Conn) (Command, net.Addr, error) {
-	return p.readReqRep(c, 0)
+	cmd, addr, _, err := p.readReqRep(c, 0, nil)
+	return cmd, addr, err
 }
 
 func (p Proto) ReadReply(c net.Conn, cmd Command) (Reply, net.Addr, error) {
-	reply, addr, err := p.readReqRep(c, cmd)
+	reply, addr, _, err := p.readReqRep(c, cmd, nil)
 
 	return Reply(reply), addr, err
 }
 
 func (p Proto) WriteRequest(c net.Conn, cmd Command, addr net.Addr) (err error) {
-	return p.writeReqRep(c, cmd, addr)
+	_, err = p.writeReqRep(c, cmd, addr, nil)
+	return err
 }
 
 func (p Proto) WriteReply(c net.Conn, rep Reply, addr net.Addr) (err error) {
-	return p.writeReqRep(c, Command(rep), addr)
+	_, err = p.writeReqRep(c, Command(rep), addr, nil)
+	return err
 }
 
-func (p Proto) readReqRep(c net.Conn, rcmd Command) (cmd Command, addr net.Addr, err error) {
-	var buf [258]byte
+func (p Proto) readReqRep(c net.Conn, rcmd Command, buf []byte) (cmd Command, addr net.Addr, nbuf []byte, err error) {
+	buf = grow(buf, 20)
 
 	_, err = io.ReadFull(c, buf[:4])
+	if errors.Is(err, io.EOF) {
+		err = io.ErrUnexpectedEOF
+	}
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, buf, err
 	}
 
 	if buf[0] != 0x5 {
-		return 0, nil, ErrUnsupportedProtocol
+		return 0, nil, buf, ErrUnsupportedProtocol
 	}
 
 	cmd = Command(buf[1])
 
-	addr, err = readAddr(c, buf[3], buf[:], rcmd == CommandUDPAssoc || cmd == CommandUDPAssoc)
+	addr, buf, err = readAddr(c, buf[3], buf[:], rcmd == CommandUDPAssoc || cmd == CommandUDPAssoc)
+	if errors.Is(err, io.EOF) {
+		err = io.ErrUnexpectedEOF
+	}
 	if err != nil {
-		return cmd, addr, err
+		return cmd, addr, buf, err
 	}
 
-	return cmd, addr, nil
+	return cmd, addr, buf, nil
 }
 
-func (p Proto) writeReqRep(c net.Conn, cmd Command, addr net.Addr) (err error) {
-	var buf [256 + 6]byte
+func (p Proto) writeReqRep(c net.Conn, cmd Command, addr net.Addr, buf []byte) (nbuf []byte, err error) {
+	buf = grow(buf, 24)
 
 	buf[0] = 0x5
 	buf[1] = byte(cmd)
@@ -217,27 +221,27 @@ func (p Proto) writeReqRep(c net.Conn, cmd Command, addr net.Addr) (err error) {
 
 	i := 3
 
-	i, err = encodeAddr(buf[:], i, addr)
+	i, buf, err = encodeAddr(buf, i, addr)
 	if err != nil {
-		return err
+		return buf, err
 	}
 
 	_, err = c.Write(buf[:i])
 	if err != nil {
-		return err
+		return buf, err
 	}
 
-	return nil
+	return buf, nil
 }
 
-func encodeAddr(buf []byte, st int, a net.Addr) (i int, err error) {
+func encodeAddr(buf []byte, st int, a net.Addr) (i int, nbuf []byte, err error) {
 	i = st
 
 	switch a := a.(type) {
 	case *net.TCPAddr:
-		i, err = encodeIP(buf, st, a.IP)
+		i, buf, err = encodeIP(buf, st, a.IP)
 		if err != nil {
-			return 0, err
+			return 0, buf, err
 		}
 
 		buf[i] = byte(a.Port >> 8)
@@ -245,9 +249,9 @@ func encodeAddr(buf []byte, st int, a net.Addr) (i int, err error) {
 		buf[i] = byte(a.Port)
 		i++
 	case *net.UDPAddr:
-		i, err = encodeIP(buf, st, a.IP)
+		i, buf, err = encodeIP(buf, st, a.IP)
 		if err != nil {
-			return 0, err
+			return 0, buf, err
 		}
 
 		buf[i] = byte(a.Port >> 8)
@@ -255,33 +259,34 @@ func encodeAddr(buf []byte, st int, a net.Addr) (i int, err error) {
 		buf[i] = byte(a.Port)
 		i++
 	case TCPAddr:
-		i, err = encodeAddrString(buf, st, string(a))
+		i, buf, err = encodeAddrString(buf, st, string(a))
 		if err != nil {
-			return 0, err
+			return 0, buf, err
 		}
 	case UDPAddr:
-		i, err = encodeAddrString(buf, st, string(a))
+		i, buf, err = encodeAddrString(buf, st, string(a))
 		if err != nil {
-			return 0, err
+			return 0, buf, err
 		}
 	case nil:
-		i, err = encodeAddrString(buf, st, "")
+		i, buf, err = encodeAddrString(buf, st, "")
 		if err != nil {
-			return 0, err
+			return 0, buf, err
 		}
 	default:
-		i, err = encodeAddrString(buf, st, a.String())
+		i, buf, err = encodeAddrString(buf, st, a.String())
 		if err != nil {
-			return 0, err
+			return 0, buf, err
 		}
 	}
 
-	return i, nil
+	return i, buf, nil
 }
 
-func encodeIP(buf []byte, st int, ip net.IP) (i int, err error) {
+func encodeIP(buf []byte, st int, ip net.IP) (i int, nbuf []byte, err error) {
 	i = st
 	q := ip.To4()
+	buf = grow(buf, 1+len(ip)+2)
 
 	if q != nil {
 		buf[i] = 0x1
@@ -299,16 +304,18 @@ func encodeIP(buf []byte, st int, ip net.IP) (i int, err error) {
 
 		i += copy(buf[i:], []byte{0, 0, 0, 0})
 	} else {
-		return 0, fmt.Errorf("bad ip: %v", ip)
+		return 0, buf, fmt.Errorf("bad ip: %v", ip)
 	}
 
-	return i, nil
+	return i, buf, nil
 }
 
-func encodeAddrString(buf []byte, st int, addr string) (i int, err error) {
+func encodeAddrString(buf []byte, st int, addr string) (i int, nbuf []byte, err error) {
 	i = st
 
 	if addr == "" {
+		buf = grow(buf, 1+4+2)
+
 		// type
 		buf[i] = 0x1 // ipv4
 		i++
@@ -316,22 +323,24 @@ func encodeAddrString(buf []byte, st int, addr string) (i int, err error) {
 		// ipv4 + port
 		i += copy(buf[i:], []byte{0, 0, 0, 0, 0, 0})
 
-		return i, nil
+		return i, buf, nil
 	}
 
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return 0, err
+		return 0, buf, err
 	}
 
 	if len(host) > 256 {
-		return 0, fmt.Errorf("too long hostname")
+		return 0, buf, fmt.Errorf("too long hostname")
 	}
 
 	porti, err := strconv.ParseInt(port, 10, 16)
 	if err != nil {
-		return 0, err
+		return 0, buf, err
 	}
+
+	buf = grow(buf, 1+1+len(host)+2)
 
 	buf[i] = 0x3
 	i++
@@ -345,10 +354,10 @@ func encodeAddrString(buf []byte, st int, addr string) (i int, err error) {
 	buf[i] = byte(porti)
 	i++
 
-	return i, nil
+	return i, buf, nil
 }
 
-func readAddr(c net.Conn, typ byte, buf []byte, udp bool) (addr net.Addr, err error) {
+func readAddr(c net.Conn, typ byte, buf []byte, udp bool) (addr net.Addr, nbuf []byte, err error) {
 	switch typ {
 	case 0x01: // ipv4
 		return readIP(c, 4, buf, udp)
@@ -357,14 +366,16 @@ func readAddr(c net.Conn, typ byte, buf []byte, udp bool) (addr net.Addr, err er
 	case 0x03: // domain name
 		return readName(c, buf, udp)
 	default:
-		return nil, fmt.Errorf("%w: %v", ErrUnsupportedAddressType, typ)
+		return nil, buf, fmt.Errorf("%w: %v", ErrUnsupportedAddressType, typ)
 	}
 }
 
-func readIP(c net.Conn, len int, buf []byte, udp bool) (addr net.Addr, err error) {
+func readIP(c net.Conn, len int, buf []byte, udp bool) (addr net.Addr, nbuf []byte, err error) {
+	buf = grow(buf, len+2)
+
 	_, err = io.ReadFull(c, buf[:len+2])
 	if err != nil {
-		return nil, err
+		return nil, buf, err
 	}
 
 	ip := make([]byte, len)
@@ -385,31 +396,33 @@ func readIP(c net.Conn, len int, buf []byte, udp bool) (addr net.Addr, err error
 		}
 	}
 
-	return addr, nil
+	return addr, buf, nil
 }
 
-func readName(c net.Conn, buf []byte, udp bool) (addr net.Addr, err error) {
+func readName(c net.Conn, buf []byte, udp bool) (addr net.Addr, nbuf []byte, err error) {
 	_, err = c.Read(buf[:1])
 	if err != nil {
-		return nil, err
+		return nil, buf, err
 	}
 
 	n := buf[0]
+	buf = grow(buf, int(n)+2)
 
 	_, err = io.ReadFull(c, buf[:n+2])
 	if err != nil {
-		return nil, err
+		return nil, buf, err
 	}
 
 	port := int(buf[n])<<8 | int(buf[n+1])
 
-	a := fmt.Sprintf("%s:%d", buf[:n], port)
+	buf[n] = ':'
+	buf = strconv.AppendInt(buf[:n+1], int64(port), 10)
 
 	if udp {
-		return UDPAddr(a), nil
+		return UDPAddr(buf), buf, nil
 	}
 
-	return TCPAddr(a), nil
+	return TCPAddr(buf), buf, nil
 }
 
 func (c Command) String() string {
@@ -459,3 +472,11 @@ func (a TCPAddr) String() string  { return string(a) }
 
 func (a UDPAddr) Network() string { return "udp" }
 func (a UDPAddr) String() string  { return string(a) }
+
+func grow(b []byte, n int) []byte {
+	if cap(b) >= n {
+		return b[:cap(b)]
+	}
+
+	return append(b, make([]byte, n-len(b))...)
+}

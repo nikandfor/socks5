@@ -25,6 +25,36 @@ func TestHandshake(t *testing.T) {
 	testHandshake(t)
 }
 
+func TestRequestName(t *testing.T) {
+	var p Proto
+	var c FakeConn
+
+	err := p.WriteRequest(&c, CommandTCPBind, TCPAddr("addr:1234"))
+	assert.NoError(t, err)
+
+	t.Logf("written: % 02x", c.b)
+
+	cmd, addr, err := p.ReadRequest(&c)
+	assert.NoError(t, err)
+	assert.Equal(t, CommandTCPBind, cmd)
+	assert.Equal(t, TCPAddr("addr:1234"), addr)
+}
+
+func TestRequestIP16(t *testing.T) {
+	var p Proto
+	var c FakeConn
+
+	err := p.WriteRequest(&c, CommandUDPAssoc, &net.TCPAddr{IP: net.IP{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5}, Port: 1111})
+	assert.NoError(t, err)
+
+	t.Logf("written: % 02x", c.b)
+
+	cmd, addr, err := p.ReadRequest(&c)
+	assert.NoError(t, err)
+	assert.Equal(t, CommandUDPAssoc, cmd)
+	assert.Equal(t, &net.UDPAddr{IP: net.IP{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5}, Port: 1111}, addr)
+}
+
 func BenchmarkServerHandshake(b *testing.B) {
 	b.ReportAllocs()
 
@@ -61,6 +91,68 @@ func BenchmarkClientHandshake(b *testing.B) {
 
 	assert.NoError(b, err)
 	assert.Equal(b, m, AuthMethod(3))
+}
+
+func BenchmarkWriteRequest(b *testing.B) {
+	b.ReportAllocs()
+
+	var p Proto
+	var c FakeConn
+	var err error
+
+	for i := 0; i < b.N; i++ {
+		c.ResetWriter()
+
+		err = p.WriteRequest(&c, CommandTCPBind, TCPAddr("addr:1234"))
+	}
+
+	assert.NoError(b, err)
+}
+
+func BenchmarkReadRequestName(b *testing.B) {
+	b.ReportAllocs()
+
+	var p Proto
+	var c FakeConn
+
+	err := p.WriteRequest(&c, CommandTCPBind, TCPAddr("addr:1234"))
+	assert.NoError(b, err)
+
+	var cmd Command
+	var addr net.Addr
+
+	for i := 0; i < b.N; i++ {
+		c.ResetReader()
+
+		cmd, addr, err = p.ReadRequest(&c)
+	}
+
+	assert.NoError(b, err)
+	assert.Equal(b, CommandTCPBind, cmd)
+	assert.Equal(b, TCPAddr("addr:1234"), addr)
+}
+
+func BenchmarkReadRequestIP16(b *testing.B) {
+	b.ReportAllocs()
+
+	var p Proto
+	var c FakeConn
+
+	err := p.WriteRequest(&c, CommandUDPAssoc, &net.TCPAddr{IP: net.IP{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5}, Port: 1111})
+	assert.NoError(b, err)
+
+	var cmd Command
+	var addr net.Addr
+
+	for i := 0; i < b.N; i++ {
+		c.ResetReader()
+
+		cmd, addr, err = p.ReadRequest(&c)
+	}
+
+	assert.NoError(b, err)
+	assert.Equal(b, CommandUDPAssoc, cmd)
+	assert.Equal(b, &net.UDPAddr{IP: net.IP{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5}, Port: 1111}, addr)
 }
 
 func testHandshake(t testing.TB) (c, s *FakePipe) {

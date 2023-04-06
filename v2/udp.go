@@ -54,7 +54,7 @@ func (c UDPConn) Write(p []byte) (n int, err error) {
 }
 
 func (c UDPConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-	l := 6 + 256 + len(p)
+	l := 32 + len(p)
 
 	d := make([]byte, l)
 
@@ -62,11 +62,12 @@ func (c UDPConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	d[1] = 0
 	d[2] = 0
 
-	i, err := encodeAddr(d, 3, addr)
+	i, d, err := encodeAddr(d, 3, addr)
 	if err != nil {
 		return 0, errors.Wrap(err, "encode addr")
 	}
 
+	d = grow(d, i+len(p))
 	copy(d[i:], p)
 
 	n, err = c.udp.Write(d[:i+len(p)])
