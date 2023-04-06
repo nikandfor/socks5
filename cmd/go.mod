@@ -1,6 +1,6 @@
 module github.com/nikandfor/socks5/cmd
 
-go 1.19
+go 1.18
 
 replace github.com/nikandfor/socks5 => ../
 
