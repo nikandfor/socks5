@@ -12,7 +12,7 @@ import (
 	"github.com/nikandfor/errors"
 	"github.com/nikandfor/graceful"
 	"github.com/nikandfor/hacked/hnet"
-	"github.com/nikandfor/socks5/v2"
+	"github.com/nikandfor/socks5"
 	"github.com/nikandfor/tlog"
 	"github.com/nikandfor/tlog/ext/tlflag"
 )

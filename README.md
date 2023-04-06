@@ -21,7 +21,7 @@ Generated on Apple Air M1
 ```
 goos: darwin
 goarch: arm64
-pkg: github.com/nikandfor/socks5/v2
+pkg: github.com/nikandfor/socks5
 BenchmarkServerHandshake-8   	24888297	        48.11 ns/op	       8 B/op	       1 allocs/op
 BenchmarkClientHandshake-8   	39229520	        29.58 ns/op	       8 B/op	       1 allocs/op
 BenchmarkWriteRequest-8      	23223670	        51.34 ns/op	      24 B/op	       1 allocs/op
