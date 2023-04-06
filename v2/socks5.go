@@ -71,10 +71,11 @@ var (
 )
 
 func (p Proto) ClientHandshake(c net.Conn, methods ...AuthMethod) (auth AuthMethod, err error) {
-	var buf [257]byte
+	var bufdata [8]byte
+	buf := bufdata[:]
 
-	if len(methods) > 255 {
-		return 0, fmt.Errorf("too much of auth methods")
+	if 2+len(methods) > len(buf) {
+		buf = make([]byte, 2+len(methods))
 	}
 
 	buf[0] = 0x5
@@ -90,6 +91,9 @@ func (p Proto) ClientHandshake(c net.Conn, methods ...AuthMethod) (auth AuthMeth
 	}
 
 	_, err = io.ReadFull(c, buf[:2])
+	if errors.Is(err, io.EOF) {
+		err = io.ErrUnexpectedEOF
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -108,18 +112,30 @@ func (p Proto) ClientHandshake(c net.Conn, methods ...AuthMethod) (auth AuthMeth
 }
 
 func (p Proto) ServerHandshake(c net.Conn, methods ...AuthMethod) (auth AuthMethod, err error) {
-	var buf [256]byte
+	var bufdata [8]byte
+	buf := bufdata[:]
 
 	_, err = io.ReadFull(c, buf[:2])
+	if errors.Is(err, io.EOF) {
+		err = io.ErrUnexpectedEOF
+	}
 	if err != nil {
 		return 0, err
 	}
 
-	if buf[0] != 0x5 {
+	if buf[0] != 0x5 { // version
 		return 0, ErrUnsupportedProtocol
 	}
 
-	n, err := io.ReadFull(c, buf[:buf[1]])
+	nmeth := int(buf[1])
+	if 2+nmeth > len(buf) {
+		buf = make([]byte, 2+nmeth)
+	}
+
+	n, err := io.ReadFull(c, buf[:nmeth])
+	if errors.Is(err, io.EOF) {
+		err = io.ErrUnexpectedEOF
+	}
 	if err != nil {
 		return 0, err
 	}
