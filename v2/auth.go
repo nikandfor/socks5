@@ -96,3 +96,6 @@ func (a UserPassAuth) ReadReply(c net.Conn) (status int, err error) {
 
 	return int(buf[1]), nil
 }
+
+func (UserPassAuth) StatusSuccess() int { return 0 }
+func (UserPassAuth) StatusFailure() int { return 1 }

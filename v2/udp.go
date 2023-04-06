@@ -2,6 +2,7 @@ package socks5
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"time"
 
@@ -17,11 +18,11 @@ type (
 )
 
 func (c UDPConn) Read(p []byte) (n int, err error) {
-	n, _, err = c.ReadFrom(p)
+	n, _, err = c.ReadDst(p)
 	return
 }
 
-func (c UDPConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+func (c UDPConn) ReadDst(p []byte) (n int, addr net.Addr, err error) {
 	for {
 		n, err = c.udp.Read(p)
 		if err != nil {
@@ -50,10 +51,10 @@ func (c UDPConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 }
 
 func (c UDPConn) Write(p []byte) (n int, err error) {
-	return c.WriteTo(p, c.raddr)
+	return c.WriteSrc(p, nil)
 }
 
-func (c UDPConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
+func (c UDPConn) WriteSrc(p []byte, addr net.Addr) (n int, err error) {
 	l := 32 + len(p)
 
 	d := make([]byte, l)
@@ -107,6 +108,14 @@ func (c UDPConn) Close() (err error) {
 	}
 
 	return
+}
+
+func ParsePacketHeader(p []byte) (net.Addr, int, error) {
+	if len(p) < 6 || p[2] != 0 {
+		return nil, 0, errors.New("malformed packet")
+	}
+
+	return parseAddr(p, 3, true)
 }
 
 func parseAddr(p []byte, st int, udp bool) (a net.Addr, i int, err error) {
@@ -174,4 +183,32 @@ func parseName(p []byte, st int, udp bool) (addr net.Addr, i int, err error) {
 	}
 
 	return addr, i, nil
+}
+
+func EncodePacketHeader(buf []byte, dst int, addr net.Addr) (int, error) {
+	end, buf, err := encodeAddr(buf[:dst], 3, addr)
+	if err != nil {
+		return 0, err
+	}
+	if end > dst {
+		return end, io.ErrShortBuffer
+	}
+
+	if end == dst {
+		return 0, nil
+	}
+
+	off := dst - end
+
+	end, _, err = encodeAddr(buf[:dst], off+3, addr)
+	if err != nil {
+		return 0, err
+	}
+	if end != dst {
+		return end, errors.New("bad address encoder")
+	}
+
+	copy(buf[off:], []byte{0, 0, 0})
+
+	return off, nil
 }
