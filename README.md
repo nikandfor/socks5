@@ -1,8 +1,7 @@
 [![Documentation](https://pkg.go.dev/badge/github.com/nikandfor/socks5)](https://pkg.go.dev/github.com/nikandfor/socks5?tab=doc)
-[![Build Status](https://travis-ci.com/nikandfor/socks5.svg?branch=master)](https://travis-ci.com/nikandfor/socks5)
+[![Go workflow](https://github.com/nikandfor/socks5/actions/workflows/go.yml/badge.svg)](https://github.com/nikandfor/socks5/actions/workflows/go.yml)
 [![CircleCI](https://circleci.com/gh/nikandfor/socks5.svg?style=svg)](https://circleci.com/gh/nikandfor/socks5)
 [![codecov](https://codecov.io/gh/nikandfor/socks5/branch/master/graph/badge.svg)](https://codecov.io/gh/nikandfor/socks5)
-[![GolangCI](https://golangci.com/badges/github.com/nikandfor/socks5.svg)](https://golangci.com/r/github.com/nikandfor/socks5)
 [![Go Report Card](https://goreportcard.com/badge/github.com/nikandfor/socks5)](https://goreportcard.com/report/github.com/nikandfor/socks5)
 ![GitHub tag (latest SemVer)](https://img.shields.io/github/v/tag/nikandfor/socks5?sort=semver)
 
