@@ -70,7 +70,7 @@ var (
 	ErrNoAcceptableAuth       = errors.New("no acceptable auth method")
 )
 
-func (p Proto) ClientHandshake(c net.Conn, methods ...AuthMethod) (auth AuthMethod, err error) {
+func (p Proto) ClientHandshakeWrite(c net.Conn, methods ...AuthMethod) error {
 	var bufdata [8]byte
 	buf := bufdata[:]
 	buf = grow(buf, 2+len(methods))
@@ -82,10 +82,17 @@ func (p Proto) ClientHandshake(c net.Conn, methods ...AuthMethod) (auth AuthMeth
 		buf[2+i] = byte(m)
 	}
 
-	_, err = c.Write(buf[:2+len(methods)])
+	_, err := c.Write(buf[:2+len(methods)])
 	if err != nil {
-		return 0, err
+		return err
 	}
+
+	return nil
+}
+
+func (p Proto) ClientHandshakeRead(c net.Conn) (auth AuthMethod, err error) {
+	var bufdata [2]byte
+	buf := bufdata[:]
 
 	_, err = io.ReadFull(c, buf[:2])
 	if errors.Is(err, io.EOF) {
@@ -108,7 +115,16 @@ func (p Proto) ClientHandshake(c net.Conn, methods ...AuthMethod) (auth AuthMeth
 	return auth, nil
 }
 
-func (p Proto) ServerHandshake(c net.Conn, methods ...AuthMethod) (auth AuthMethod, err error) {
+func (p Proto) ClientHandshake(c net.Conn, methods ...AuthMethod) (auth AuthMethod, err error) {
+	err = p.ClientHandshakeWrite(c, methods...)
+	if err != nil {
+		return 0, err
+	}
+
+	return p.ClientHandshakeRead(c)
+}
+
+func (p Proto) ServerHandshakeRead(c net.Conn, methods ...AuthMethod) (auth AuthMethod, err error) {
 	var bufdata [8]byte
 	buf := bufdata[:]
 
@@ -148,19 +164,43 @@ authloop:
 		}
 	}
 
-	buf[0] = 5
-	buf[1] = byte(auth)
-
-	_, err = c.Write(buf[:2])
-	if err != nil {
-		return 0, err
-	}
-
 	if auth == AuthNoAcceptable {
 		return 0, ErrNoAcceptableAuth
 	}
 
 	return auth, nil
+}
+
+func (p Proto) ServerHandshakeWrite(c net.Conn, auth AuthMethod) (err error) {
+	var bufdata [2]byte
+	buf := bufdata[:]
+
+	buf[0] = 5
+	buf[1] = byte(auth)
+
+	_, err = c.Write(buf[:2])
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (p Proto) ServerHandshake(c net.Conn, methods ...AuthMethod) (auth AuthMethod, err error) {
+	auth, err = p.ServerHandshakeRead(c, methods...)
+	if auth == AuthNoAcceptable {
+		_ = p.ServerHandshakeWrite(c, auth)
+	}
+	if err != nil {
+		return
+	}
+
+	err = p.ServerHandshakeWrite(c, auth)
+	if err != nil {
+		return auth, err
+	}
+
+	return auth, err
 }
 
 func (p Proto) ReadRequest(c net.Conn) (Command, net.Addr, error) {
