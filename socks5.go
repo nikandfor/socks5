@@ -465,6 +465,17 @@ func readName(c net.Conn, buf []byte, udp bool) (addr net.Addr, nbuf []byte, err
 	return TCPAddr(buf), buf, nil
 }
 
+func (m AuthMethod) String() string {
+	switch m {
+	case AuthNone:
+		return "none"
+	case AuthUserPass:
+		return "user_pass"
+	default:
+		return fmt.Sprintf("auth[%x]", int(m))
+	}
+}
+
 func (c Command) String() string {
 	switch c {
 	case CommandTCPConn:
