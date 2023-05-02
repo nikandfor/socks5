@@ -18,11 +18,11 @@ type (
 )
 
 func (c UDPConn) Read(p []byte) (n int, err error) {
-	n, _, err = c.ReadDst(p)
+	n, _, err = c.ReadFrom(p)
 	return
 }
 
-func (c UDPConn) ReadDst(p []byte) (n int, addr net.Addr, err error) {
+func (c UDPConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 	for {
 		n, err = c.udp.Read(p)
 		if err != nil {
@@ -51,10 +51,10 @@ func (c UDPConn) ReadDst(p []byte) (n int, addr net.Addr, err error) {
 }
 
 func (c UDPConn) Write(p []byte) (n int, err error) {
-	return c.WriteSrc(p, nil)
+	return c.WriteTo(p, c.raddr)
 }
 
-func (c UDPConn) WriteSrc(p []byte, addr net.Addr) (n int, err error) {
+func (c UDPConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	l := 32 + len(p)
 
 	d := make([]byte, l)
