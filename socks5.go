@@ -326,7 +326,7 @@ func encodeAddr(buf []byte, st int, a net.Addr) (i int, nbuf []byte, err error) 
 func encodeIP(buf []byte, st int, ip net.IP) (i int, nbuf []byte, err error) {
 	i = st
 	q := ip.To4()
-	buf = grow(buf, 1+len(ip)+2)
+	buf = grow(buf, i+1+len(ip)+2)
 
 	if q != nil {
 		buf[i] = 0x1
@@ -380,7 +380,7 @@ func encodeAddrString(buf []byte, st int, addr string) (i int, nbuf []byte, err 
 		return 0, buf, err
 	}
 
-	buf = grow(buf, 1+1+len(host)+2)
+	buf = grow(buf, i+1+1+len(host)+2)
 
 	buf[i] = 0x3
 	i++
