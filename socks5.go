@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"strconv"
 )
 
@@ -279,25 +280,15 @@ func encodeAddr(buf []byte, st int, a net.Addr) (i int, nbuf []byte, err error) 
 
 	switch a := a.(type) {
 	case *net.TCPAddr:
-		i, buf, err = encodeIP(buf, st, a.IP)
+		i, buf, err = encodeIPPort(buf, st, a.IP, a.Port)
 		if err != nil {
 			return 0, buf, err
 		}
-
-		buf[i] = byte(a.Port >> 8)
-		i++
-		buf[i] = byte(a.Port)
-		i++
 	case *net.UDPAddr:
-		i, buf, err = encodeIP(buf, st, a.IP)
+		i, buf, err = encodeIPPort(buf, st, a.IP, a.Port)
 		if err != nil {
 			return 0, buf, err
 		}
-
-		buf[i] = byte(a.Port >> 8)
-		i++
-		buf[i] = byte(a.Port)
-		i++
 	case TCPAddr:
 		i, buf, err = encodeAddrString(buf, st, string(a))
 		if err != nil {
@@ -321,6 +312,20 @@ func encodeAddr(buf []byte, st int, a net.Addr) (i int, nbuf []byte, err error) 
 	}
 
 	return i, buf, nil
+}
+
+func encodeIPPort(buf []byte, st int, ip net.IP, port int) (i int, nbuf []byte, err error) {
+	i, buf, err = encodeIP(buf, st, ip)
+	if err != nil {
+		return i, buf, err
+	}
+
+	buf[i] = byte(port >> 8)
+	i++
+	buf[i] = byte(port)
+	i++
+
+	return i, buf, err
 }
 
 func encodeIP(buf []byte, st int, ip net.IP) (i int, nbuf []byte, err error) {
@@ -364,6 +369,10 @@ func encodeAddrString(buf []byte, st int, addr string) (i int, nbuf []byte, err 
 		i += copy(buf[i:], []byte{0, 0, 0, 0, 0, 0})
 
 		return i, buf, nil
+	}
+
+	if a, err := netip.ParseAddrPort(addr); err == nil {
+		return encodeIPPort(buf, st, a.Addr().AsSlice(), int(a.Port()))
 	}
 
 	host, port, err := net.SplitHostPort(addr)
