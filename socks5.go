@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/netip"
 	"strconv"
 )
 
@@ -369,10 +368,6 @@ func encodeAddrString(buf []byte, st int, addr string) (i int, nbuf []byte, err 
 		i += copy(buf[i:], []byte{0, 0, 0, 0, 0, 0})
 
 		return i, buf, nil
-	}
-
-	if a, err := netip.ParseAddrPort(addr); err == nil {
-		return encodeIPPort(buf, st, a.Addr().AsSlice(), int(a.Port()))
 	}
 
 	host, port, err := net.SplitHostPort(addr)

@@ -3,6 +3,7 @@ package socks5
 import (
 	"context"
 	"net"
+	"net/netip"
 
 	"github.com/nikandfor/errors"
 )
@@ -87,6 +88,10 @@ func (d *Dialer) DialContext(ctx context.Context, nw, addr string) (_ net.Conn, 
 
 	if cmd == CommandTCPConn {
 		reqAddr = TCPAddr(addr)
+
+		if a, err := netip.ParseAddrPort(addr); err == nil {
+			reqAddr = net.TCPAddrFromAddrPort(a)
+		}
 	} else if cmd == CommandUDPAssoc {
 		reqAddr = UDPAddr("")
 	} else {
