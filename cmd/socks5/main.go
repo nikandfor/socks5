@@ -27,6 +27,14 @@ type (
 
 		creds []string
 	}
+
+	stdConn struct {
+		in, out *os.File
+
+		net.Conn
+	}
+
+	stdAddr struct{}
 )
 
 func main() {
@@ -39,11 +47,22 @@ func main() {
 		},
 	}
 
+	clientCmd := &cli.Command{
+		Name:   "client",
+		Action: clientMain,
+		Args:   cli.Args{},
+		Flags: []*cli.Flag{
+			cli.NewFlag("proxy,x", "", "proxy address"),
+			cli.NewFlag("proxy-auth,P", "", "proxy auth"),
+		},
+	}
+
 	app := &cli.Command{
 		Name:   "socks5",
 		Before: before,
 		Commands: []*cli.Command{
 			serverCmd,
+			clientCmd,
 		},
 		Flags: []*cli.Flag{
 			cli.NewFlag("log", "stderr?dm", "log output file (or stderr)"),
@@ -85,6 +104,74 @@ func before(c *cli.Command) error {
 	}
 
 	return nil
+}
+
+func clientMain(c *cli.Command) (err error) {
+	ctx := context.Background()
+	addr := c.Args.First()
+
+	r, err := net.Dial("tcp", c.String("proxy"))
+	if err != nil {
+		return errors.Wrap(err, "dial")
+	}
+
+	var p socks5.Proto
+	var usr, pwd string
+
+	auth := []socks5.AuthMethod{socks5.AuthNone}
+
+	if q := c.String("proxy-auth"); q != "" {
+		auth = []socks5.AuthMethod{socks5.AuthUserPass, socks5.AuthNone}
+		usr, pwd, _ = strings.Cut(q, ":")
+	}
+
+	meth, err := p.ClientHandshake(r, auth...)
+	if err != nil {
+		return errors.Wrap(err, "handshake")
+	}
+
+	switch meth {
+	case socks5.AuthNone:
+	case socks5.AuthUserPass:
+		var auth socks5.UserPassAuth
+
+		err := auth.WriteRequest(r, usr, pwd)
+		if err != nil {
+			return errors.Wrap(err, "auth: write request")
+		}
+
+		status, err := auth.ReadReply(r)
+		if err != nil {
+			return errors.Wrap(err, "auth: read reply")
+		}
+
+		if status != auth.StatusSuccess() {
+			return errors.Wrap(err, "auth: unauthenticated")
+		}
+	default:
+		return errors.New("unsupported auth method")
+	}
+
+	err = p.WriteRequest(r, socks5.CommandTCPConn, socks5.TCPAddr(addr))
+	if err != nil {
+		return errors.Wrap(err, "write request")
+	}
+
+	s, _, err := p.ReadReply(r, socks5.CommandTCPConn)
+	if err != nil {
+		return errors.Wrap(err, "read reply")
+	}
+
+	if s != socks5.ReplySuccess {
+		return s
+	}
+
+	lc := stdConn{
+		in:  os.Stdin,
+		out: os.Stdout,
+	}
+
+	return biproxy(ctx, lc, r)
 }
 
 func serverMain(c *cli.Command) (err error) {
@@ -243,8 +330,6 @@ func handleTCPConn(ctx context.Context, c net.Conn, addr net.Addr) (err error) {
 		return errors.Wrap(err, "dial remote")
 	}
 
-	tr.V("dial").Printw("dialed remote", "local_addr", rc.LocalAddr())
-
 	defer func() {
 		e := rc.Close()
 		if err == nil {
@@ -259,7 +344,7 @@ func handleTCPConn(ctx context.Context, c net.Conn, addr net.Addr) (err error) {
 
 	responded = true
 
-	tr.V("replied").Printw("replied", "remote_addr", rc.RemoteAddr())
+	tr.Printw("connected", "local_addr", rc.LocalAddr(), "remote_addr", rc.RemoteAddr())
 
 	return biproxy(ctx, c, rc)
 }
@@ -497,5 +582,33 @@ func replyFromErr(err error) socks5.Reply {
 		return socks5.ReplyGeneralFailure
 	}
 }
+
+func (c stdConn) Read(p []byte) (int, error) {
+	return c.in.Read(p)
+}
+
+func (c stdConn) Write(p []byte) (int, error) {
+	return c.out.Write(p)
+}
+
+func (c stdConn) Close() error {
+	e1 := c.out.Close()
+	e2 := c.in.Close()
+
+	if e1 != nil {
+		return e1
+	}
+	if e2 != nil {
+		return e2
+	}
+
+	return nil
+}
+
+func (c stdConn) LocalAddr() net.Addr  { return stdAddr{} }
+func (c stdConn) RemoteAddr() net.Addr { return stdAddr{} }
+
+func (stdAddr) Network() string { return "stdio" }
+func (stdAddr) String() string  { return "local" }
 
 func isComma(r rune) bool { return r == ',' }
