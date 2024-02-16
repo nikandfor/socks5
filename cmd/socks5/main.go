@@ -15,7 +15,7 @@ import (
 	"tlog.app/go/tlog"
 	"tlog.app/go/tlog/ext/tlflag"
 
-	"github.com/nikandfor/socks5"
+	"nikand.dev/go/socks5"
 )
 
 func main() {
