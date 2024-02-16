@@ -5,7 +5,7 @@ import (
 	"net"
 	"net/netip"
 
-	"github.com/nikandfor/errors"
+	"tlog.app/go/errors"
 )
 
 type (

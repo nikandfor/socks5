@@ -8,13 +8,14 @@ import (
 	"os"
 	"sync"
 
-	"github.com/nikandfor/cli"
-	"github.com/nikandfor/errors"
-	"github.com/nikandfor/graceful"
 	"github.com/nikandfor/hacked/hnet"
+	"nikand.dev/go/cli"
+	"nikand.dev/go/graceful"
+	"tlog.app/go/errors"
+	"tlog.app/go/tlog"
+	"tlog.app/go/tlog/ext/tlflag"
+
 	"github.com/nikandfor/socks5"
-	"github.com/nikandfor/tlog"
-	"github.com/nikandfor/tlog/ext/tlflag"
 )
 
 func main() {

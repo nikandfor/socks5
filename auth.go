@@ -4,7 +4,7 @@ import (
 	"io"
 	"net"
 
-	"github.com/nikandfor/errors"
+	"tlog.app/go/errors"
 )
 
 type (
