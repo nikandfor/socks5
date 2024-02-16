@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/nikandfor/hacked/hnet"
@@ -18,12 +19,23 @@ import (
 	"nikand.dev/go/socks5"
 )
 
+type (
+	Server struct {
+		p socks5.Proto
+
+		auth []socks5.AuthMethod
+
+		creds []string
+	}
+)
+
 func main() {
 	serverCmd := &cli.Command{
 		Name:   "server",
 		Action: serverMain,
 		Flags: []*cli.Flag{
 			cli.NewFlag("listen,l", ":1080", "server listen address"),
+			cli.NewFlag("auth", "", "server auth credentials"),
 		},
 	}
 
@@ -86,16 +98,27 @@ func serverMain(c *cli.Command) (err error) {
 	tlog.Printw("listen", "listen", l.Addr())
 	defer tlog.Printw("finish", "err", &err)
 
+	s := &Server{
+		auth: []socks5.AuthMethod{socks5.AuthNone},
+	}
+
+	if q := c.String("auth"); q != "" {
+		s.auth = []socks5.AuthMethod{socks5.AuthUserPass}
+		s.creds = strings.FieldsFunc(q, isComma)
+	}
+
+	tlog.Printw("server auth", "methods", s.auth, "credentials", len(s.creds))
+
 	gr := graceful.New()
 
 	gr.Add(func(ctx context.Context) error {
-		return serveServer(ctx, l)
+		return s.serve(ctx, l)
 	}, graceful.IgnoreErrors(context.Canceled))
 
 	return gr.Run(ctx)
 }
 
-func serveServer(ctx context.Context, l net.Listener) error {
+func (s *Server) serve(ctx context.Context, l net.Listener) error {
 	var wg sync.WaitGroup
 
 	defer wg.Wait()
@@ -118,14 +141,14 @@ func serveServer(ctx context.Context, l net.Listener) error {
 
 			ctx := tlog.ContextWithSpan(ctx, tr)
 
-			err = handleConn(ctx, c)
+			err = s.handleConn(ctx, c)
 		}()
 	}
 
 	return nil
 }
 
-func handleConn(ctx context.Context, c net.Conn) (err error) {
+func (s *Server) handleConn(ctx context.Context, c net.Conn) (err error) {
 	tr := tlog.SpanFromContext(ctx)
 
 	defer func() {
@@ -135,9 +158,7 @@ func handleConn(ctx context.Context, c net.Conn) (err error) {
 		}
 	}()
 
-	var p socks5.Proto
-
-	meth, err := p.ServerHandshake(c, socks5.AuthUserPass, socks5.AuthNone)
+	meth, err := s.p.ServerHandshake(c, s.auth...)
 	if err != nil {
 		return errors.Wrap(err, "handshake")
 	}
@@ -155,7 +176,23 @@ func handleConn(ctx context.Context, c net.Conn) (err error) {
 			return errors.Wrap(err, "user-pass auth: read request")
 		}
 
-		_, _ = usr, pwd // check as you want
+		cred := usr + ":" + pwd
+
+		ok := func() bool {
+			for _, c := range s.creds {
+				if c == cred {
+					return true
+				}
+			}
+
+			return false
+		}()
+
+		if !ok {
+			_ = auth.WriteReply(c, auth.StatusFailure())
+
+			return errors.New("user-pass auth: unauthenticated")
+		}
 
 		err = auth.WriteReply(c, auth.StatusSuccess())
 		if err != nil {
@@ -165,7 +202,7 @@ func handleConn(ctx context.Context, c net.Conn) (err error) {
 		panic(meth)
 	}
 
-	cmd, addr, err := p.ReadRequest(c)
+	cmd, addr, err := s.p.ReadRequest(c)
 	if err != nil {
 		return errors.Wrap(err, "read request")
 	}
@@ -460,3 +497,5 @@ func replyFromErr(err error) socks5.Reply {
 		return socks5.ReplyGeneralFailure
 	}
 }
+
+func isComma(r rune) bool { return r == ',' }
