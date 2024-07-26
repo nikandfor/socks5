@@ -15,7 +15,7 @@ This is a library designed for performant multiproxy implementations. This means
 
 # Example
 
-There is a cmd/socks5/main.go which can be treated as an example. It can also be used as a command.
+There is a [cmd/socks5/main.go](cmd/socks5/main.go) which can be treated as an example. It can also be used as a command.
 
 ```
 go install nikand.dev/go/socks5/cmd/socks5@latest # install
@@ -25,15 +25,16 @@ socks5 server -l :1080 -auth user:pass,user2:pass # auth is optional, without it
 
 ## Benchmarks
 
-Generated on Apple Air M1
+Generated on Apple Macbook Air M1
 
 ```
 goos: darwin
 goarch: arm64
-pkg: github.com/nikandfor/socks5
-BenchmarkServerHandshake-8   	24888297	        48.11 ns/op	       8 B/op	       1 allocs/op
-BenchmarkClientHandshake-8   	39229520	        29.58 ns/op	       8 B/op	       1 allocs/op
-BenchmarkWriteRequest-8      	23223670	        51.34 ns/op	      24 B/op	       1 allocs/op
-BenchmarkReadRequestName-8   	12071508	       100.1 ns/op	      56 B/op	       3 allocs/op
-BenchmarkReadRequestIP16-8   	13279104	        90.60 ns/op	      88 B/op	       3 allocs/op
+pkg: nikand.dev/go/socks5
+BenchmarkServerHandshake-8        	36790387	        32.39 ns/op	       0 B/op	       0 allocs/op
+BenchmarkClientHandshake-8        	56295850	        21.05 ns/op	       0 B/op	       0 allocs/op
+BenchmarkWriteRequest-8           	37399100	        32.51 ns/op	       0 B/op	       0 allocs/op
+BenchmarkReadRequestName-8        	16392350	        71.46 ns/op	      32 B/op	       2 allocs/op
+BenchmarkReadRequestIP16-8        	22964949	        53.26 ns/op	      64 B/op	       1 allocs/op
+BenchmarkReadRequestNetipIP16-8   	23116654	        51.40 ns/op	      32 B/op	       1 allocs/op
 ```

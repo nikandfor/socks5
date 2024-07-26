@@ -152,7 +152,7 @@ func clientMain(c *cli.Command) (err error) {
 		return errors.New("unsupported auth method")
 	}
 
-	err = p.WriteRequest(r, socks5.CommandTCPConn, socks5.TCPAddr(addr))
+	err = p.WriteRequest(r, socks5.CommandTCPConn, socks5.TCPName(addr))
 	if err != nil {
 		return errors.Wrap(err, "write request")
 	}
@@ -508,7 +508,7 @@ func (q *ClientUDPRelay) proxyUDPClientToRemote(ctx context.Context, c, r net.Pa
 		q.client = client
 		q.mu.Unlock()
 
-		addr, st, err := socks5.ParsePacketHeader(buf[:n])
+		addr, st, err := socks5.UDPProto{}.ParsePacketHeader(buf[:n])
 		if err != nil {
 			continue
 		}
@@ -530,7 +530,7 @@ func (q *ClientUDPRelay) proxyUDPRemoteToClient(ctx context.Context, c, r net.Pa
 			return errors.Wrap(err, "read")
 		}
 
-		st, err := socks5.EncodePacketHeader(buf, dst, addr)
+		st, err := socks5.UDPProto{}.EncodePacketHeader(buf, dst, addr)
 		if err != nil {
 			return errors.Wrap(err, "encode packet header")
 		}
