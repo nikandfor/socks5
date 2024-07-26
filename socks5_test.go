@@ -29,7 +29,7 @@ func TestRequestName(t *testing.T) {
 	var p Proto
 	var c FakeConn
 
-	err := p.WriteRequest(&c, CommandTCPBind, TCPAddr("addr:1234"))
+	err := p.WriteRequest(&c, CommandTCPBind, TCPName("addr:1234"))
 	assert.NoError(t, err)
 
 	t.Logf("written: % 02x", c.b)
@@ -37,7 +37,7 @@ func TestRequestName(t *testing.T) {
 	cmd, addr, err := p.ReadRequest(&c)
 	assert.NoError(t, err)
 	assert.Equal(t, CommandTCPBind, cmd)
-	assert.Equal(t, TCPAddr("addr:1234"), addr)
+	assert.Equal(t, TCPName("addr:1234"), addr)
 }
 
 func TestRequestIP16(t *testing.T) {
@@ -103,7 +103,7 @@ func BenchmarkWriteRequest(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		c.ResetWriter()
 
-		err = p.WriteRequest(&c, CommandTCPBind, TCPAddr("addr:1234"))
+		err = p.WriteRequest(&c, CommandTCPBind, TCPName("addr:1234"))
 	}
 
 	assert.NoError(b, err)
@@ -115,7 +115,7 @@ func BenchmarkReadRequestName(b *testing.B) {
 	var p Proto
 	var c FakeConn
 
-	err := p.WriteRequest(&c, CommandTCPBind, TCPAddr("addr:1234"))
+	err := p.WriteRequest(&c, CommandTCPBind, TCPName("addr:1234"))
 	assert.NoError(b, err)
 
 	var cmd Command
@@ -129,7 +129,7 @@ func BenchmarkReadRequestName(b *testing.B) {
 
 	assert.NoError(b, err)
 	assert.Equal(b, CommandTCPBind, cmd)
-	assert.Equal(b, TCPAddr("addr:1234"), addr)
+	assert.Equal(b, TCPName("addr:1234"), addr)
 }
 
 func BenchmarkReadRequestIP16(b *testing.B) {

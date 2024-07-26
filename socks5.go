@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"strconv"
 )
 
@@ -16,13 +17,18 @@ type (
 
 	Reply Command
 
-	// TCPAddr is a string address.
-	TCPAddr string
+	// TCPName is a string address.
+	TCPName string
 
-	// UDPAddr is a string address.
-	UDPAddr string
+	// UDPName is a string address.
+	UDPName string
 
-	Proto struct{}
+	TCPAddr netip.AddrPort
+	UDPAddr netip.AddrPort
+
+	Proto struct {
+		NetIPAddrs bool
+	}
 )
 
 // Auth Methods
@@ -224,7 +230,7 @@ func (p Proto) WriteReply(c net.Conn, rep Reply, addr net.Addr) (err error) {
 	return err
 }
 
-func (p Proto) readReqRep(c net.Conn, rcmd Command, buf []byte) (cmd Command, addr net.Addr, nbuf []byte, err error) {
+func (p Proto) readReqRep(c net.Conn, rcmd Command, buf []byte) (cmd Command, addr net.Addr, _ []byte, err error) {
 	buf = grow(buf, 20)
 
 	_, err = io.ReadFull(c, buf[:4])
@@ -241,7 +247,7 @@ func (p Proto) readReqRep(c net.Conn, rcmd Command, buf []byte) (cmd Command, ad
 
 	cmd = Command(buf[1])
 
-	addr, buf, err = readAddr(c, buf[3], buf[:], rcmd == CommandUDPAssoc || cmd == CommandUDPAssoc)
+	addr, buf, err = p.readAddr(c, buf[3], buf[:], rcmd == CommandUDPAssoc || cmd == CommandUDPAssoc)
 	if errors.Is(err, io.EOF) {
 		err = io.ErrUnexpectedEOF
 	}
@@ -252,7 +258,7 @@ func (p Proto) readReqRep(c net.Conn, rcmd Command, buf []byte) (cmd Command, ad
 	return cmd, addr, buf, nil
 }
 
-func (p Proto) writeReqRep(c net.Conn, cmd Command, addr net.Addr, buf []byte) (nbuf []byte, err error) {
+func (p Proto) writeReqRep(c net.Conn, cmd Command, addr net.Addr, buf []byte) (_ []byte, err error) {
 	buf = grow(buf, 24)
 
 	buf[0] = 0x5
@@ -261,7 +267,7 @@ func (p Proto) writeReqRep(c net.Conn, cmd Command, addr net.Addr, buf []byte) (
 
 	i := 3
 
-	i, buf, err = encodeAddr(buf, i, addr)
+	i, buf, err = p.encodeAddr(buf, i, addr)
 	if err != nil {
 		return buf, err
 	}
@@ -274,47 +280,79 @@ func (p Proto) writeReqRep(c net.Conn, cmd Command, addr net.Addr, buf []byte) (
 	return buf, nil
 }
 
-func encodeAddr(buf []byte, st int, a net.Addr) (i int, nbuf []byte, err error) {
+func (p Proto) encodeAddr(buf []byte, st int, a net.Addr) (i int, _ []byte, err error) {
 	i = st
 
 	switch a := a.(type) {
-	case *net.TCPAddr:
-		i, buf, err = encodeIPPort(buf, st, a.IP, a.Port)
-		if err != nil {
-			return 0, buf, err
-		}
-	case *net.UDPAddr:
-		i, buf, err = encodeIPPort(buf, st, a.IP, a.Port)
-		if err != nil {
-			return 0, buf, err
-		}
 	case TCPAddr:
-		i, buf, err = encodeAddrString(buf, st, string(a))
-		if err != nil {
-			return 0, buf, err
-		}
+		i, buf, err = p.encodeNetIPAddrPort(buf, st, netip.AddrPort(a))
 	case UDPAddr:
-		i, buf, err = encodeAddrString(buf, st, string(a))
-		if err != nil {
-			return 0, buf, err
-		}
+		i, buf, err = p.encodeNetIPAddrPort(buf, st, netip.AddrPort(a))
+	case *net.TCPAddr:
+		i, buf, err = p.encodeIPPort(buf, st, a.IP, a.Port)
+	case *net.UDPAddr:
+		i, buf, err = p.encodeIPPort(buf, st, a.IP, a.Port)
+	case TCPName:
+		i, buf, err = p.encodeAddrString(buf, st, string(a))
+	case UDPName:
+		i, buf, err = p.encodeAddrString(buf, st, string(a))
 	case nil:
-		i, buf, err = encodeAddrString(buf, st, "")
-		if err != nil {
-			return 0, buf, err
-		}
+		i, buf, err = p.encodeAddrString(buf, st, "")
 	default:
-		i, buf, err = encodeAddrString(buf, st, a.String())
-		if err != nil {
-			return 0, buf, err
-		}
+		i, buf, err = p.encodeAddrString(buf, st, a.String())
+	}
+	if err != nil {
+		return 0, buf, err
 	}
 
 	return i, buf, nil
 }
 
-func encodeIPPort(buf []byte, st int, ip net.IP, port int) (i int, nbuf []byte, err error) {
-	i, buf, err = encodeIP(buf, st, ip)
+func (p Proto) encodeNetIPAddrPort(buf []byte, st int, addr netip.AddrPort) (i int, _ []byte, err error) {
+	i = st
+	a := addr.Addr().Unmap()
+
+	ipsize := 4
+	if !a.Is4() {
+		ipsize = 16
+	}
+
+	buf = grow(buf, i+1+ipsize+2)
+
+	switch {
+	case !a.IsValid():
+		buf[i] = 0x1
+		i++
+
+		i += copy(buf[i:], []byte{0, 0, 0, 0})
+	case a.Is4():
+		buf[i] = 0x1
+		i++
+
+		ip := a.As4()
+		i += copy(buf[i:], ip[:])
+	case a.Is6():
+		buf[i] = 0x4
+		i++
+
+		ip := a.As16()
+		i += copy(buf[i:], ip[:])
+	default:
+		return 0, buf, fmt.Errorf("bad ip: %v", a)
+	}
+
+	port := addr.Port()
+
+	buf[i] = byte(port >> 8)
+	i++
+	buf[i] = byte(port)
+	i++
+
+	return i, buf, nil
+}
+
+func (p Proto) encodeIPPort(buf []byte, st int, ip net.IP, port int) (i int, _ []byte, err error) {
+	i, buf, err = p.encodeIP(buf, st, ip)
 	if err != nil {
 		return i, buf, err
 	}
@@ -327,34 +365,35 @@ func encodeIPPort(buf []byte, st int, ip net.IP, port int) (i int, nbuf []byte, 
 	return i, buf, err
 }
 
-func encodeIP(buf []byte, st int, ip net.IP) (i int, nbuf []byte, err error) {
+func (p Proto) encodeIP(buf []byte, st int, ip net.IP) (i int, _ []byte, err error) {
 	i = st
 	q := ip.To4()
 	buf = grow(buf, i+1+len(ip)+2)
 
-	if q != nil {
+	switch {
+	case q != nil:
 		buf[i] = 0x1
 		i++
 
 		i += copy(buf[i:], q)
-	} else if ip.To16() != nil {
+	case ip.To16() != nil:
 		buf[i] = 0x4
 		i++
 
 		i += copy(buf[i:], ip)
-	} else if len(ip) == 0 {
+	case len(ip) == 0:
 		buf[i] = 0x1
 		i++
 
 		i += copy(buf[i:], []byte{0, 0, 0, 0})
-	} else {
+	default:
 		return 0, buf, fmt.Errorf("bad ip: %v", ip)
 	}
 
 	return i, buf, nil
 }
 
-func encodeAddrString(buf []byte, st int, addr string) (i int, nbuf []byte, err error) {
+func (p Proto) encodeAddrString(buf []byte, st int, addr string) (i int, _ []byte, err error) {
 	i = st
 
 	if addr == "" {
@@ -401,49 +440,63 @@ func encodeAddrString(buf []byte, st int, addr string) (i int, nbuf []byte, err 
 	return i, buf, nil
 }
 
-func readAddr(c net.Conn, typ byte, buf []byte, udp bool) (addr net.Addr, nbuf []byte, err error) {
+func (p Proto) readAddr(c net.Conn, typ byte, buf []byte, udp bool) (addr net.Addr, _ []byte, err error) {
 	switch typ {
 	case 0x01: // ipv4
-		return readIP(c, 4, buf, udp)
+		return p.readIPPort(c, 4, buf, udp)
 	case 0x04: // ipv6
-		return readIP(c, 16, buf, udp)
+		return p.readIPPort(c, 16, buf, udp)
 	case 0x03: // domain name
-		return readName(c, buf, udp)
+		return p.readNamePort(c, buf, udp)
 	default:
 		return nil, buf, fmt.Errorf("%w: %v", ErrUnsupportedAddressType, typ)
 	}
 }
 
-func readIP(c net.Conn, len int, buf []byte, udp bool) (addr net.Addr, nbuf []byte, err error) {
-	buf = grow(buf, len+2)
+func (p Proto) readIPPort(c net.Conn, size int, buf []byte, udp bool) (addr net.Addr, _ []byte, err error) {
+	buf = grow(buf, size+2)
 
-	_, err = io.ReadFull(c, buf[:len+2])
+	_, err = io.ReadFull(c, buf[:size+2])
 	if err != nil {
 		return nil, buf, err
 	}
 
-	ip := make([]byte, len)
+	port := int(buf[size])<<8 | int(buf[size+1])
 
-	copy(ip, buf)
+	if p.NetIPAddrs {
+		a, ok := netip.AddrFromSlice(buf[:size])
+		if !ok {
+			panic("bad ip")
+		}
 
-	port := int(buf[len])<<8 | int(buf[len+1])
+		ap := netip.AddrPortFrom(a, uint16(port))
 
-	if udp {
-		addr = &net.UDPAddr{
-			IP:   ip,
-			Port: port,
+		if udp {
+			addr = UDPAddr(ap)
+		} else {
+			addr = TCPAddr(ap)
 		}
 	} else {
-		addr = &net.TCPAddr{
-			IP:   ip,
-			Port: port,
+		ip := make([]byte, size)
+		copy(ip, buf)
+
+		if udp {
+			addr = &net.UDPAddr{
+				IP:   ip,
+				Port: port,
+			}
+		} else {
+			addr = &net.TCPAddr{
+				IP:   ip,
+				Port: port,
+			}
 		}
 	}
 
 	return addr, buf, nil
 }
 
-func readName(c net.Conn, buf []byte, udp bool) (addr net.Addr, nbuf []byte, err error) {
+func (p Proto) readNamePort(c net.Conn, buf []byte, udp bool) (addr net.Addr, _ []byte, err error) {
 	_, err = c.Read(buf[:1])
 	if err != nil {
 		return nil, buf, err
@@ -463,10 +516,10 @@ func readName(c net.Conn, buf []byte, udp bool) (addr net.Addr, nbuf []byte, err
 	buf = strconv.AppendInt(buf[:n+1], int64(port), 10)
 
 	if udp {
-		return UDPAddr(buf), buf, nil
+		return UDPName(buf), buf, nil
 	}
 
-	return TCPAddr(buf), buf, nil
+	return TCPName(buf), buf, nil
 }
 
 func (m AuthMethod) String() string {
@@ -522,11 +575,16 @@ func (r Reply) Error() string {
 	return r.String()
 }
 
-func (a TCPAddr) Network() string { return "tcp" }
-func (a TCPAddr) String() string  { return string(a) }
+func (a TCPName) Network() string { return "tcp" }
+func (a TCPName) String() string  { return string(a) }
 
+func (a UDPName) Network() string { return "udp" }
+func (a UDPName) String() string  { return string(a) }
+
+func (a TCPAddr) Network() string { return "tcp" }
+func (a TCPAddr) String() string  { return netip.AddrPort(a).String() }
 func (a UDPAddr) Network() string { return "udp" }
-func (a UDPAddr) String() string  { return string(a) }
+func (a UDPAddr) String() string  { return netip.AddrPort(a).String() }
 
 func grow(b []byte, n int) []byte {
 	if cap(b) >= n {

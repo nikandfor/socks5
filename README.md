@@ -13,6 +13,16 @@ This is a library designed for performant multiproxy implementations. This means
 * Stateless objects
 * Both client and server is implemented
 
+# Example
+
+There is a cmd/socks5/main.go which can be treated as an example. It can also be used as a command.
+
+```
+go install nikand.dev/go/socks5/cmd/socks5@latest # install
+
+socks5 server -l :1080 -auth user:pass,user2:pass # auth is optional, without it none auth is used
+```
+
 ## Benchmarks
 
 Generated on Apple Air M1

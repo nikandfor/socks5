@@ -4,13 +4,20 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"time"
 
 	"tlog.app/go/errors"
 )
 
 type (
+	UDPProto struct {
+		Proto
+	}
+
 	UDPConn struct {
+		Proto UDPProto
+
 		raddr net.Addr
 		udp   net.Conn
 		tcp   net.Conn
@@ -39,7 +46,7 @@ func (c UDPConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 
 		var i int
 
-		addr, i, err = parseAddr(p, 3, true)
+		addr, i, err = c.Proto.parseAddr(p, 3, true)
 		if err != nil {
 			continue
 		}
@@ -55,23 +62,21 @@ func (c UDPConn) Write(p []byte) (n int, err error) {
 }
 
 func (c UDPConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-	l := 32 + len(p)
+	buf := make([]byte, 32+len(p))
 
-	d := make([]byte, l)
+	buf[0] = 0
+	buf[1] = 0
+	buf[2] = 0
 
-	d[0] = 0
-	d[1] = 0
-	d[2] = 0
-
-	i, d, err := encodeAddr(d, 3, addr)
+	i, buf, err := c.Proto.encodeAddr(buf, 3, addr)
 	if err != nil {
 		return 0, errors.Wrap(err, "encode addr")
 	}
 
-	d = grow(d, i+len(p))
-	copy(d[i:], p)
+	buf = grow(buf, i+len(p))
+	copy(buf[i:], p)
 
-	n, err = c.udp.Write(d[:i+len(p)])
+	n, err = c.udp.Write(buf[:i+len(p)])
 	if err != nil {
 		return n, err
 	}
@@ -110,83 +115,98 @@ func (c UDPConn) Close() (err error) {
 	return
 }
 
-func ParsePacketHeader(p []byte) (net.Addr, int, error) {
-	if len(p) < 6 || p[2] != 0 {
+func (p UDPProto) ParsePacketHeader(b []byte) (net.Addr, int, error) {
+	if len(b) < 6 || b[2] != 0 {
 		return nil, 0, errors.New("malformed packet")
 	}
 
-	return parseAddr(p, 3, true)
+	return p.parseAddr(b, 3, true)
 }
 
-func parseAddr(p []byte, st int, udp bool) (a net.Addr, i int, err error) {
-	switch p[st] {
+func (p UDPProto) parseAddr(b []byte, st int, udp bool) (a net.Addr, i int, err error) {
+	switch b[st] {
 	case 0x01: // ipv4
-		return parseIP(p, st+1, 4, udp)
+		return p.parseIPPort(b, st+1, 4, udp)
 	case 0x04: // ipv6
-		return parseIP(p, st+1, 16, udp)
+		return p.parseIPPort(b, st+1, 16, udp)
 	case 0x03: // domain name
-		return parseName(p, st+1, udp)
+		return p.parseName(b, st+1, udp)
 	default:
-		return nil, -1, fmt.Errorf("%w: %v", ErrUnsupportedAddressType, p[st])
+		return nil, -1, fmt.Errorf("%w: %v", ErrUnsupportedAddressType, b[st])
 	}
 }
 
-func parseIP(p []byte, st int, l int, udp bool) (a net.Addr, i int, err error) {
+func (p UDPProto) parseIPPort(buf []byte, st int, size int, udp bool) (addr net.Addr, i int, err error) {
 	i = st
 
-	if i+l+2 >= len(p) {
+	if i+size+2 >= len(buf) {
 		return nil, -1, fmt.Errorf("malformed datagram")
 	}
 
-	ip := make(net.IP, l)
-	i += copy(ip, p[i:])
+	port := int(buf[i])<<8 | int(buf[i+1])
 
-	port := int(p[i])<<8 | int(p[i+1])
+	if p.NetIPAddrs {
+		a, ok := netip.AddrFromSlice(buf[:size])
+		if !ok {
+			panic("bad ip")
+		}
 
-	i += 2
+		ap := netip.AddrPortFrom(a, uint16(port))
 
-	if udp {
-		return &net.UDPAddr{
-			IP:   ip,
-			Port: port,
-		}, i, nil
+		if udp {
+			addr = UDPAddr(ap)
+		} else {
+			addr = TCPAddr(ap)
+		}
 	} else {
-		return &net.TCPAddr{
-			IP:   ip,
-			Port: port,
-		}, i, nil
-	}
-}
+		ip := make(net.IP, size)
+		copy(ip, buf)
 
-func parseName(p []byte, st int, udp bool) (addr net.Addr, i int, err error) {
-	i = st
-	l := int(p[i])
-	i++
-
-	if i+l+2 >= len(p) {
-		return nil, -1, fmt.Errorf("malformed datagram")
-	}
-
-	//	a = Addr(p[i : i+l])
-	i += l
-
-	port := int(p[i])<<8 | int(p[i+1])
-
-	a := fmt.Sprintf("%s:%d", p[i-l:i], port)
-
-	i += 2
-
-	if udp {
-		addr = UDPAddr(a)
-	} else {
-		addr = TCPAddr(a)
+		if udp {
+			addr = &net.UDPAddr{
+				IP:   ip,
+				Port: port,
+			}
+		} else {
+			addr = &net.TCPAddr{
+				IP:   ip,
+				Port: port,
+			}
+		}
 	}
 
 	return addr, i, nil
 }
 
-func EncodePacketHeader(buf []byte, dst int, addr net.Addr) (int, error) {
-	end, buf, err := encodeAddr(buf[:dst], 3, addr)
+func (p UDPProto) parseName(b []byte, st int, udp bool) (addr net.Addr, i int, err error) {
+	i = st
+	l := int(b[i])
+	i++
+
+	if i+l+2 >= len(b) {
+		return nil, -1, fmt.Errorf("malformed datagram")
+	}
+
+	//	a = Addr(b[i : i+l])
+	i += l
+
+	port := int(b[i])<<8 | int(b[i+1])
+
+	a := fmt.Sprintf("%s:%d", b[i-l:i], port)
+
+	i += 2
+
+	if udp {
+		addr = UDPName(a)
+	} else {
+		addr = TCPName(a)
+	}
+
+	return addr, i, nil
+}
+
+func (p UDPProto) EncodePacketHeader(buf []byte, dst int, addr net.Addr) (int, error) {
+	end, buf, err := p.encodeAddr(buf[:dst], 3, addr)
 	if err != nil {
 		return 0, err
 	}
@@ -200,7 +220,7 @@ func EncodePacketHeader(buf []byte, dst int, addr net.Addr) (int, error) {
 
 	off := dst - end
 
-	end, _, err = encodeAddr(buf[:dst], off+3, addr)
+	end, _, err = p.encodeAddr(buf[:dst], off+3, addr)
 	if err != nil {
 		return 0, err
 	}

@@ -87,13 +87,13 @@ func (d *Dialer) DialContext(ctx context.Context, nw, addr string) (_ net.Conn, 
 	var reqAddr net.Addr
 
 	if cmd == CommandTCPConn {
-		reqAddr = TCPAddr(addr)
+		reqAddr = TCPName(addr)
 
 		if a, err := netip.ParseAddrPort(addr); err == nil {
 			reqAddr = net.TCPAddrFromAddrPort(a)
 		}
 	} else if cmd == CommandUDPAssoc {
-		reqAddr = UDPAddr("")
+		reqAddr = UDPName("")
 	} else {
 		panic(cmd)
 	}
