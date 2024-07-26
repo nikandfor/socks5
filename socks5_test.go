@@ -3,6 +3,7 @@ package socks5
 import (
 	"io"
 	"net"
+	"net/netip"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -153,6 +154,31 @@ func BenchmarkReadRequestIP16(b *testing.B) {
 	assert.NoError(b, err)
 	assert.Equal(b, CommandUDPAssoc, cmd)
 	assert.Equal(b, &net.UDPAddr{IP: net.IP{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5}, Port: 1111}, addr)
+}
+
+func BenchmarkReadRequestNetipIP16(b *testing.B) {
+	b.ReportAllocs()
+
+	var p Proto
+	var c FakeConn
+
+	p.NetIPAddrs = true
+
+	err := p.WriteRequest(&c, CommandUDPAssoc, &net.TCPAddr{IP: net.IP{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5}, Port: 1111})
+	assert.NoError(b, err)
+
+	var cmd Command
+	var addr net.Addr
+
+	for i := 0; i < b.N; i++ {
+		c.ResetReader()
+
+		cmd, addr, err = p.ReadRequest(&c)
+	}
+
+	assert.NoError(b, err)
+	assert.Equal(b, CommandUDPAssoc, cmd)
+	assert.Equal(b, UDPAddr(netip.AddrPortFrom(netip.AddrFrom16([16]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5}), 1111)), addr)
 }
 
 func testHandshake(t testing.TB) (c, s *FakePipe) {

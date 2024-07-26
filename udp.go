@@ -159,19 +159,22 @@ func (p UDPProto) parseIPPort(buf []byte, st int, size int, udp bool) (addr net.
 			addr = TCPAddr(ap)
 		}
 	} else {
-		ip := make(net.IP, size)
-		copy(ip, buf)
-
 		if udp {
-			addr = &net.UDPAddr{
-				IP:   ip,
-				Port: port,
-			}
+			obj := &udpObj{}
+			copy(obj.IP[:size], buf)
+
+			obj.Addr.IP = obj.IP[:size]
+			obj.Addr.Port = port
+
+			addr = &obj.Addr
 		} else {
-			addr = &net.TCPAddr{
-				IP:   ip,
-				Port: port,
-			}
+			obj := &tcpObj{}
+			copy(obj.IP[:size], buf)
+
+			obj.Addr.IP = obj.IP[:size]
+			obj.Addr.Port = port
+
+			addr = &obj.Addr
 		}
 	}
 

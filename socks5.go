@@ -29,6 +29,16 @@ type (
 	Proto struct {
 		NetIPAddrs bool
 	}
+
+	tcpObj struct {
+		Addr net.TCPAddr
+		IP   [16]byte
+	}
+
+	udpObj struct {
+		Addr net.UDPAddr
+		IP   [16]byte
+	}
 )
 
 // Auth Methods
@@ -78,7 +88,7 @@ var (
 
 func (p Proto) ClientHandshakeWrite(c net.Conn, methods ...AuthMethod) error {
 	var bufdata [8]byte
-	buf := bufdata[:]
+	buf := noEscapeSlice(bufdata[:])
 	buf = grow(buf, 2+len(methods))
 
 	buf[0] = 0x5
@@ -98,7 +108,7 @@ func (p Proto) ClientHandshakeWrite(c net.Conn, methods ...AuthMethod) error {
 
 func (p Proto) ClientHandshakeRead(c net.Conn) (auth AuthMethod, err error) {
 	var bufdata [2]byte
-	buf := bufdata[:]
+	buf := noEscapeSlice(bufdata[:])
 
 	_, err = io.ReadFull(c, buf[:2])
 	if errors.Is(err, io.EOF) {
@@ -132,7 +142,7 @@ func (p Proto) ClientHandshake(c net.Conn, methods ...AuthMethod) (auth AuthMeth
 
 func (p Proto) ServerHandshakeRead(c net.Conn, methods ...AuthMethod) (auth AuthMethod, err error) {
 	var bufdata [8]byte
-	buf := bufdata[:]
+	buf := noEscapeSlice(bufdata[:])
 
 	_, err = io.ReadFull(c, buf[:2])
 	if errors.Is(err, io.EOF) {
@@ -179,7 +189,7 @@ authloop:
 
 func (p Proto) ServerHandshakeWrite(c net.Conn, auth AuthMethod) (err error) {
 	var bufdata [2]byte
-	buf := bufdata[:]
+	buf := noEscapeSlice(bufdata[:])
 
 	buf[0] = 5
 	buf[1] = byte(auth)
@@ -210,23 +220,35 @@ func (p Proto) ServerHandshake(c net.Conn, methods ...AuthMethod) (auth AuthMeth
 }
 
 func (p Proto) ReadRequest(c net.Conn) (Command, net.Addr, error) {
-	cmd, addr, _, err := p.readReqRep(c, 0, nil)
+	var bufdata [40]byte
+	buf := noEscapeSlice(bufdata[:])
+
+	cmd, addr, _, err := p.readReqRep(c, 0, buf)
 	return cmd, addr, err
 }
 
 func (p Proto) ReadReply(c net.Conn, cmd Command) (Reply, net.Addr, error) {
-	reply, addr, _, err := p.readReqRep(c, cmd, nil)
+	var bufdata [40]byte
+	buf := noEscapeSlice(bufdata[:])
+
+	reply, addr, _, err := p.readReqRep(c, cmd, buf)
 
 	return Reply(reply), addr, err
 }
 
 func (p Proto) WriteRequest(c net.Conn, cmd Command, addr net.Addr) (err error) {
-	_, err = p.writeReqRep(c, cmd, addr, nil)
+	var bufdata [40]byte
+	buf := noEscapeSlice(bufdata[:])
+
+	_, err = p.writeReqRep(c, cmd, addr, buf)
 	return err
 }
 
 func (p Proto) WriteReply(c net.Conn, rep Reply, addr net.Addr) (err error) {
-	_, err = p.writeReqRep(c, Command(rep), addr, nil)
+	var bufdata [40]byte
+	buf := noEscapeSlice(bufdata[:])
+
+	_, err = p.writeReqRep(c, Command(rep), addr, buf)
 	return err
 }
 
@@ -247,7 +269,7 @@ func (p Proto) readReqRep(c net.Conn, rcmd Command, buf []byte) (cmd Command, ad
 
 	cmd = Command(buf[1])
 
-	addr, buf, err = p.readAddr(c, buf[3], buf[:], rcmd == CommandUDPAssoc || cmd == CommandUDPAssoc)
+	addr, buf, err = p.readAddr(c, buf[3], buf, rcmd == CommandUDPAssoc || cmd == CommandUDPAssoc)
 	if errors.Is(err, io.EOF) {
 		err = io.ErrUnexpectedEOF
 	}
@@ -297,7 +319,7 @@ func (p Proto) encodeAddr(buf []byte, st int, a net.Addr) (i int, _ []byte, err 
 	case UDPName:
 		i, buf, err = p.encodeAddrString(buf, st, string(a))
 	case nil:
-		i, buf, err = p.encodeAddrString(buf, st, "")
+		i, buf, err = p.encodeIPPort(buf, st, nil, 0)
 	default:
 		i, buf, err = p.encodeAddrString(buf, st, a.String())
 	}
@@ -396,19 +418,6 @@ func (p Proto) encodeIP(buf []byte, st int, ip net.IP) (i int, _ []byte, err err
 func (p Proto) encodeAddrString(buf []byte, st int, addr string) (i int, _ []byte, err error) {
 	i = st
 
-	if addr == "" {
-		buf = grow(buf, 1+4+2)
-
-		// type
-		buf[i] = 0x1 // ipv4
-		i++
-
-		// ipv4 + port
-		i += copy(buf[i:], []byte{0, 0, 0, 0, 0, 0})
-
-		return i, buf, nil
-	}
-
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return 0, buf, err
@@ -477,19 +486,22 @@ func (p Proto) readIPPort(c net.Conn, size int, buf []byte, udp bool) (addr net.
 			addr = TCPAddr(ap)
 		}
 	} else {
-		ip := make([]byte, size)
-		copy(ip, buf)
-
 		if udp {
-			addr = &net.UDPAddr{
-				IP:   ip,
-				Port: port,
-			}
+			obj := &udpObj{}
+			copy(obj.IP[:size], buf)
+
+			obj.Addr.IP = obj.IP[:size]
+			obj.Addr.Port = port
+
+			addr = &obj.Addr
 		} else {
-			addr = &net.TCPAddr{
-				IP:   ip,
-				Port: port,
-			}
+			obj := &tcpObj{}
+			copy(obj.IP[:size], buf)
+
+			obj.Addr.IP = obj.IP[:size]
+			obj.Addr.Port = port
+
+			addr = &obj.Addr
 		}
 	}
 
@@ -503,7 +515,7 @@ func (p Proto) readNamePort(c net.Conn, buf []byte, udp bool) (addr net.Addr, _ 
 	}
 
 	n := buf[0]
-	buf = grow(buf, int(n)+2)
+	buf = grow(buf, int(n)+6)
 
 	_, err = io.ReadFull(c, buf[:n+2])
 	if err != nil {
@@ -516,10 +528,12 @@ func (p Proto) readNamePort(c net.Conn, buf []byte, udp bool) (addr net.Addr, _ 
 	buf = strconv.AppendInt(buf[:n+1], int64(port), 10)
 
 	if udp {
-		return UDPName(buf), buf, nil
+		addr = UDPName(buf)
+	} else {
+		addr = TCPName(buf)
 	}
 
-	return TCPName(buf), buf, nil
+	return addr, buf, nil
 }
 
 func (m AuthMethod) String() string {
