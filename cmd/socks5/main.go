@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -9,10 +11,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nikandfor/hacked/hnet"
 	"nikand.dev/go/cli"
 	"nikand.dev/go/graceful"
-	"tlog.app/go/errors"
+	"nikand.dev/go/hacked/hnet"
 	"tlog.app/go/tlog"
 	"tlog.app/go/tlog/ext/tlflag"
 
@@ -65,7 +66,7 @@ func main() {
 			clientCmd,
 		},
 		Flags: []*cli.Flag{
-			cli.NewFlag("log", "stderr?dm", "log output file (or stderr)"),
+			cli.NewFlag("log", "stderr?console=dm", "log output file (or stderr)"),
 			cli.NewFlag("verbosity,v", "", "logger verbosity topics"),
 			cli.NewFlag("debug", "", "debug address"),
 			cli.FlagfileFlag,
@@ -79,7 +80,7 @@ func main() {
 func before(c *cli.Command) error {
 	w, err := tlflag.OpenWriter(c.String("log"))
 	if err != nil {
-		return errors.Wrap(err, "open log file")
+		return fmt.Errorf("open log file: %w", err)
 	}
 
 	tlog.DefaultLogger = tlog.New(w)
@@ -89,7 +90,7 @@ func before(c *cli.Command) error {
 	if q := c.String("debug"); q != "" {
 		l, err := net.Listen("tcp", q)
 		if err != nil {
-			return errors.Wrap(err, "listen debug")
+			return fmt.Errorf("listen debug: %w", err)
 		}
 
 		go func() {
@@ -112,7 +113,7 @@ func clientMain(c *cli.Command) (err error) {
 
 	r, err := net.Dial("tcp", c.String("proxy"))
 	if err != nil {
-		return errors.Wrap(err, "dial")
+		return fmt.Errorf("dial: %w", err)
 	}
 
 	var p socks5.Proto
@@ -127,7 +128,7 @@ func clientMain(c *cli.Command) (err error) {
 
 	meth, err := p.ClientHandshake(r, auth...)
 	if err != nil {
-		return errors.Wrap(err, "handshake")
+		return fmt.Errorf("handshake: %w", err)
 	}
 
 	switch meth {
@@ -137,16 +138,16 @@ func clientMain(c *cli.Command) (err error) {
 
 		err := auth.WriteRequest(r, usr, pwd)
 		if err != nil {
-			return errors.Wrap(err, "auth: write request")
+			return fmt.Errorf("auth: write request: %w", err)
 		}
 
 		status, err := auth.ReadReply(r)
 		if err != nil {
-			return errors.Wrap(err, "auth: read reply")
+			return fmt.Errorf("auth: read reply: %w", err)
 		}
 
 		if status != auth.StatusSuccess() {
-			return errors.Wrap(err, "auth: unauthenticated")
+			return fmt.Errorf("auth: unauthenticated: %w", err)
 		}
 	default:
 		return errors.New("unsupported auth method")
@@ -154,12 +155,12 @@ func clientMain(c *cli.Command) (err error) {
 
 	err = p.WriteRequest(r, socks5.CommandTCPConn, socks5.TCPName(addr))
 	if err != nil {
-		return errors.Wrap(err, "write request")
+		return fmt.Errorf("write request: %w", err)
 	}
 
 	s, _, err := p.ReadReply(r, socks5.CommandTCPConn)
 	if err != nil {
-		return errors.Wrap(err, "read reply")
+		return fmt.Errorf("read reply: %w", err)
 	}
 
 	if s != socks5.ReplySuccess {
@@ -179,7 +180,7 @@ func serverMain(c *cli.Command) (err error) {
 
 	l, err := net.Listen("tcp", c.String("listen"))
 	if err != nil {
-		return errors.Wrap(err, "listen")
+		return fmt.Errorf("listen: %w", err)
 	}
 
 	tlog.Printw("listen", "listen", l.Addr())
@@ -213,7 +214,7 @@ func (s *Server) serve(ctx context.Context, l net.Listener) error {
 	for {
 		c, err := hnet.Accept(ctx, l)
 		if err != nil {
-			return errors.Wrap(err, "accept")
+			return fmt.Errorf("accept: %w", err)
 		}
 
 		wg.Add(1)
@@ -231,8 +232,6 @@ func (s *Server) serve(ctx context.Context, l net.Listener) error {
 			err = s.handleConn(ctx, c)
 		}()
 	}
-
-	return nil
 }
 
 func (s *Server) handleConn(ctx context.Context, c net.Conn) (err error) {
@@ -240,14 +239,14 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) (err error) {
 
 	defer func() {
 		e := c.Close()
-		if err == nil {
-			err = errors.Wrap(e, "close client")
+		if err == nil && e != nil {
+			err = fmt.Errorf("close client: %w", e)
 		}
 	}()
 
 	meth, err := s.p.ServerHandshake(c, s.auth...)
 	if err != nil {
-		return errors.Wrap(err, "handshake")
+		return fmt.Errorf("handshake: %w", err)
 	}
 
 	tr.Printw("auth", "auth_method", meth)
@@ -260,7 +259,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) (err error) {
 
 		usr, pwd, err := auth.ReadRequest(c)
 		if err != nil {
-			return errors.Wrap(err, "user-pass auth: read request")
+			return fmt.Errorf("user-pass auth: read request: %w", err)
 		}
 
 		cred := usr + ":" + pwd
@@ -283,7 +282,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) (err error) {
 
 		err = auth.WriteReply(c, auth.StatusSuccess())
 		if err != nil {
-			return errors.Wrap(err, "user-pass auth: write reply")
+			return fmt.Errorf("user-pass auth: write reply: %w", err)
 		}
 	default:
 		panic(meth)
@@ -291,7 +290,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) (err error) {
 
 	cmd, addr, err := s.p.ReadRequest(c)
 	if err != nil {
-		return errors.Wrap(err, "read request")
+		return fmt.Errorf("read request: %w", err)
 	}
 
 	tr.Printw("request", "command", cmd, "addr", addr)
@@ -304,7 +303,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) (err error) {
 	case socks5.CommandUDPAssoc:
 		return handleUDPAssoc(ctx, c, addr)
 	default:
-		return errors.New("unsupported cmd: %v", cmd)
+		return fmt.Errorf("unsupported cmd: %v", cmd)
 	}
 }
 
@@ -327,19 +326,19 @@ func handleTCPConn(ctx context.Context, c net.Conn, addr net.Addr) (err error) {
 
 	rc, err := net.Dial("tcp", addr.String())
 	if err != nil {
-		return errors.Wrap(err, "dial remote")
+		return fmt.Errorf("dial remote: %w", err)
 	}
 
 	defer func() {
 		e := rc.Close()
-		if err == nil {
-			err = errors.Wrap(e, "close remote")
+		if err == nil && e != nil {
+			err = fmt.Errorf("close remote: %w", e)
 		}
 	}()
 
 	err = p.WriteReply(c, socks5.ReplySuccess, rc.RemoteAddr())
 	if err != nil {
-		return errors.Wrap(err, "write reply")
+		return fmt.Errorf("write reply: %w", err)
 	}
 
 	responded = true
@@ -370,7 +369,7 @@ func handleTCPBind(ctx context.Context, c net.Conn, addr net.Addr) (err error) {
 		l, err = net.Listen("tcp", "")
 	}
 	if err != nil {
-		return errors.Wrap(err, "listen")
+		return fmt.Errorf("listen: %w", err)
 	}
 
 	defer func() {
@@ -379,31 +378,31 @@ func handleTCPBind(ctx context.Context, c net.Conn, addr net.Addr) (err error) {
 		}
 
 		e := l.Close()
-		if err == nil {
-			err = errors.Wrap(e, "close listener")
+		if err == nil && e != nil {
+			err = fmt.Errorf("close listener: %w", e)
 		}
 	}()
 
 	err = p.WriteReply(c, socks5.ReplySuccess, l.Addr())
 	if err != nil {
-		return errors.Wrap(err, "write reply")
+		return fmt.Errorf("write reply: %w", err)
 	}
 
 	rc, err := l.Accept()
 	if err != nil {
-		return errors.Wrap(err, "accept")
+		return fmt.Errorf("accept: %w", err)
 	}
 
 	err = l.Close()
 	if err != nil {
-		return errors.Wrap(err, "close listener")
+		return fmt.Errorf("close listener: %w", err)
 	}
 
 	l = nil
 
 	err = p.WriteReply(c, socks5.ReplySuccess, rc.RemoteAddr())
 	if err != nil {
-		return errors.Wrap(err, "write reply")
+		return fmt.Errorf("write reply: %w", err)
 	}
 
 	responded = true
@@ -432,31 +431,31 @@ func handleUDPAssoc(ctx context.Context, c net.Conn, addr net.Addr) (err error) 
 		l, err = net.ListenPacket("udp", "")
 	}
 	if err != nil {
-		return errors.Wrap(err, "listen udp")
+		return fmt.Errorf("listen udp: %w", err)
 	}
 
 	defer func() {
 		e := l.Close()
-		if err == nil {
-			err = errors.Wrap(e, "close listener")
+		if err == nil && e != nil {
+			err = fmt.Errorf("close listener: %w", e)
 		}
 	}()
 
 	r, err := net.ListenPacket("udp", "")
 	if err != nil {
-		return errors.Wrap(err, "bind remote")
+		return fmt.Errorf("bind remote: %w", err)
 	}
 
 	defer func() {
 		e := r.Close()
-		if err == nil {
-			err = errors.Wrap(e, "close remote")
+		if err == nil && e != nil {
+			err = fmt.Errorf("close remote: %w", e)
 		}
 	}()
 
 	err = p.WriteReply(c, socks5.ReplySuccess, l.LocalAddr())
 	if err != nil {
-		return errors.Wrap(err, "write reply")
+		return fmt.Errorf("write reply: %w", err)
 	}
 
 	responded = true
@@ -467,17 +466,29 @@ func handleUDPAssoc(ctx context.Context, c net.Conn, addr net.Addr) (err error) 
 
 	go func() {
 		err := relay.proxyUDPClientToRemote(ctx, l, r)
-		errc <- errors.Wrap(err, "udp client-to-remote")
+		if err != nil {
+			err = fmt.Errorf("udp client-to-remote: %w", err)
+		}
+
+		errc <- err
 	}()
 
 	go func() {
 		err := relay.proxyUDPRemoteToClient(ctx, l, r)
-		errc <- errors.Wrap(err, "udp remote-to-client")
+		if err != nil {
+			err = fmt.Errorf("udp remote-to-client: %w", err)
+		}
+
+		errc <- err
 	}()
 
 	go func() {
 		_, err := io.Copy(io.Discard, c)
-		errc <- errors.Wrap(err, "tcp read from client")
+		if err != nil {
+			err = fmt.Errorf("tcp read from client: %w", err)
+		}
+
+		errc <- err
 	}()
 
 	for i := 0; i < 3; i++ {
@@ -501,7 +512,7 @@ func (q *ClientUDPRelay) proxyUDPClientToRemote(ctx context.Context, c, r net.Pa
 	for {
 		n, client, err := c.ReadFrom(buf)
 		if err != nil {
-			return errors.Wrap(err, "read")
+			return fmt.Errorf("read: %w", err)
 		}
 
 		q.mu.Lock()
@@ -515,7 +526,7 @@ func (q *ClientUDPRelay) proxyUDPClientToRemote(ctx context.Context, c, r net.Pa
 
 		_, err = r.WriteTo(buf[st:n], addr)
 		if err != nil {
-			return errors.Wrap(err, "write")
+			return fmt.Errorf("write: %w", err)
 		}
 	}
 }
@@ -527,12 +538,12 @@ func (q *ClientUDPRelay) proxyUDPRemoteToClient(ctx context.Context, c, r net.Pa
 	for {
 		n, addr, err := r.ReadFrom(buf[dst:])
 		if err != nil {
-			return errors.Wrap(err, "read")
+			return fmt.Errorf("read: %w", err)
 		}
 
 		st, err := socks5.UDPProto{}.EncodePacketHeader(buf, dst, addr)
 		if err != nil {
-			return errors.Wrap(err, "encode packet header")
+			return fmt.Errorf("encode packet header: %w", err)
 		}
 
 		q.mu.Lock()
@@ -541,7 +552,7 @@ func (q *ClientUDPRelay) proxyUDPRemoteToClient(ctx context.Context, c, r net.Pa
 
 		_, err = c.WriteTo(buf[st:n], client)
 		if err != nil {
-			return errors.Wrap(err, "write")
+			return fmt.Errorf("write: %w", err)
 		}
 	}
 }
@@ -556,12 +567,15 @@ func biproxy(ctx context.Context, c, r net.Conn) error {
 			CloseWrite() error
 		}); ok {
 			e := c.CloseWrite()
-			if err == nil {
-				err = errors.Wrap(e, "close write")
+			if err == nil && e != nil {
+				err = fmt.Errorf("close writer: %w", e)
 			}
 		}
+		if err != nil {
+			err = fmt.Errorf("%v: %w", name, err)
+		}
 
-		errc <- errors.Wrap(err, "%v", name)
+		errc <- err
 	}
 
 	go proxy("client-to-remote", r, c)

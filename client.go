@@ -2,10 +2,9 @@ package socks5
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/netip"
-
-	"tlog.app/go/errors"
 )
 
 type (
@@ -38,14 +37,14 @@ func (d *Dialer) DialContext(ctx context.Context, nw, addr string) (_ net.Conn, 
 	case "udp", "udp4", "udp6":
 		cmd = CommandUDPAssoc
 	default:
-		return nil, errors.New("unsupported network: %v", nw)
+		return nil, fmt.Errorf("unsupported network: %v", nw)
 	}
 
 	var udpDstAddr *net.UDPAddr
 	if cmd == CommandUDPAssoc {
 		udpDstAddr, err = net.ResolveUDPAddr(nw, addr)
 		if err != nil {
-			return nil, errors.Wrap(err, "resolve addr")
+			return nil, fmt.Errorf("resolve addr: %w", err)
 		}
 	}
 
@@ -59,7 +58,7 @@ func (d *Dialer) DialContext(ctx context.Context, nw, addr string) (_ net.Conn, 
 
 	tc, err := dial(ctx, "tcp", d.Proxy)
 	if err != nil {
-		return nil, errors.Wrap(err, "dial proxy")
+		return nil, fmt.Errorf("dial proxy: %w", err)
 	}
 
 	defer func() {
@@ -74,13 +73,13 @@ func (d *Dialer) DialContext(ctx context.Context, nw, addr string) (_ net.Conn, 
 
 	meth, err := proto.ClientHandshake(tc, d.AuthMethods...)
 	if err != nil {
-		return nil, errors.Wrap(err, "proxy handshake")
+		return nil, fmt.Errorf("proxy handshake: %w", err)
 	}
 
 	if d.Auther != nil || meth != AuthNone {
 		err = d.Auther.Auth(ctx, meth, tc)
 		if err != nil {
-			return nil, errors.Wrap(err, "auth")
+			return nil, fmt.Errorf("auth: %w", err)
 		}
 	}
 
@@ -100,16 +99,16 @@ func (d *Dialer) DialContext(ctx context.Context, nw, addr string) (_ net.Conn, 
 
 	err = proto.WriteRequest(tc, cmd, reqAddr)
 	if err != nil {
-		return nil, errors.Wrap(err, "send request")
+		return nil, fmt.Errorf("send request: %w", err)
 	}
 
 	rep, raddr, err := proto.ReadReply(tc, cmd)
 	if err != nil {
-		return nil, errors.Wrap(err, "read reply")
+		return nil, fmt.Errorf("read reply: %w", err)
 	}
 
 	if rep != ReplySuccess {
-		return nil, errors.Wrap(rep, "got reply")
+		return nil, fmt.Errorf("got reply: %w", rep)
 	}
 
 	if cmd == CommandTCPConn {
@@ -118,7 +117,7 @@ func (d *Dialer) DialContext(ctx context.Context, nw, addr string) (_ net.Conn, 
 
 	uc, err := dial(ctx, nw, raddr.String())
 	if err != nil {
-		return nil, errors.Wrap(err, "dial udp")
+		return nil, fmt.Errorf("dial udp: %w", err)
 	}
 
 	return UDPConn{

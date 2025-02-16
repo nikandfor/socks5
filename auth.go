@@ -1,10 +1,9 @@
 package socks5
 
 import (
+	"errors"
 	"io"
 	"net"
-
-	"tlog.app/go/errors"
 )
 
 type (

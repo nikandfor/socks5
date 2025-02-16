@@ -1,13 +1,12 @@
 package socks5
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/netip"
 	"time"
-
-	"tlog.app/go/errors"
 )
 
 type (
@@ -70,7 +69,7 @@ func (c UDPConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 
 	i, buf, err := c.Proto.encodeAddr(buf, 3, addr)
 	if err != nil {
-		return 0, errors.Wrap(err, "encode addr")
+		return 0, fmt.Errorf("encode addr: %w", err)
 	}
 
 	buf = grow(buf, i+len(p))
