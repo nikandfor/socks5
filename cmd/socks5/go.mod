@@ -8,7 +8,7 @@ require (
 	nikand.dev/go/cli v0.0.0-20250208225017-de7159bfa4ce
 	nikand.dev/go/graceful v0.0.0-20250204165249-cd5d95b0197d
 	nikand.dev/go/hacked v0.0.0-20250204131511-0939a5c9c782
-	nikand.dev/go/socks5 v0.2.0
+	nikand.dev/go/socks5 v0.2.1-0.20250216170058-1543d1281fe4
 	tlog.app/go/tlog v0.25.2-0.20250216145453-98f39dcd7941
 )
 

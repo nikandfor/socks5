@@ -60,8 +60,8 @@ nikand.dev/go/graceful v0.0.0-20250204165249-cd5d95b0197d h1:NCN1B9lCvx1b7PaKZiX
 nikand.dev/go/graceful v0.0.0-20250204165249-cd5d95b0197d/go.mod h1:bUqIAji7UpcuG3jWx6gMs+fYYUGm6/9oM3kLXLCRghA=
 nikand.dev/go/hacked v0.0.0-20250204131511-0939a5c9c782 h1:ZwZD4yU0BtLJ3dIuFGxGrvgCshSqR5QtF3p48Qyjzzo=
 nikand.dev/go/hacked v0.0.0-20250204131511-0939a5c9c782/go.mod h1:1Rg61dFquIgf7q9N6J5su45CvGWn/cDG5x2gXzDN5G0=
-nikand.dev/go/socks5 v0.2.0 h1:C7AvBw9z4rtGhmM69ZuD8GhR8Pc9/vVBti3c1SjeEcs=
-nikand.dev/go/socks5 v0.2.0/go.mod h1:Py0lTivyxHlFFgQqEfdZPOToPWckj9pY7oFnKoHJg+Q=
+nikand.dev/go/socks5 v0.2.1-0.20250216170058-1543d1281fe4 h1:aFiMgPYsbLhwI6GGIknuHsuutwF2Sh6JUkMOQUX4HtA=
+nikand.dev/go/socks5 v0.2.1-0.20250216170058-1543d1281fe4/go.mod h1:UlKA95go0ck1E7mTA/oBUlzK/PAGeaoBG2Q9M1JKHoM=
 tlog.app/go/eazy v0.4.2 h1:Pa///lJlpkUUaApgI2A5xwtB+DnFG6ENDOtrRHDJsNk=
 tlog.app/go/eazy v0.4.2/go.mod h1:qk9DSaqsW9Kn4TXRxQn3VZrqmlvrTBSk753g0RQMUy0=
 tlog.app/go/errors v0.11.0 h1:tPziygVc2iyVVqYGirwSuxGLaYJ9yFE5gKGxtS30fKk=
