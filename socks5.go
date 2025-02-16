@@ -303,8 +303,6 @@ func (p Proto) writeReqRep(c net.Conn, cmd Command, addr net.Addr, buf []byte) (
 }
 
 func (p Proto) encodeAddr(buf []byte, st int, a net.Addr) (i int, _ []byte, err error) {
-	i = st
-
 	switch a := a.(type) {
 	case TCPAddr:
 		i, buf, err = p.encodeNetIPAddrPort(buf, st, netip.AddrPort(a))

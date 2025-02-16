@@ -2,10 +2,6 @@ package socks5
 
 import "unsafe"
 
-func unsafeString(b []byte) string {
-	return *(*string)(unsafe.Pointer(&b))
-}
-
 func noEscapeSlice[S ~[]E, E any](s S) S {
 	return *(*S)(noescape(unsafe.Pointer(&s)))
 }
